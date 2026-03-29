@@ -291,22 +291,33 @@
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
 
-    // Separate winners, losers, final
     const winners = matchups.filter(m=>m.bracket==='winners');
     const losers  = matchups.filter(m=>m.bracket==='losers');
     const finals  = matchups.filter(m=>m.bracket==='final');
-
-    // Group by round label
     const wRounds = groupByRound(winners);
     const lRounds = groupByRound(losers);
 
-    const W = canvas.width = canvas.offsetWidth || 900;
-    const H = canvas.height = 420;
-    ctx.clearRect(0,0,W,H);
-
-    const BOX_W = 130, BOX_H = 36, GAP_Y = 14, ROUND_W = 160;
+    const BOX_W = 140, BOX_H = 38, GAP_Y = 12, ROUND_W = 170, PAD = 20;
     const INK = '#1a1208', ACCENT = '#c8392b', GOLD = '#d4a017';
-    const PAPER = '#f5f0e8', GREEN = '#2e7d32', MUTED = '#6b5f4a';
+    const GREEN = '#2e7d32', MUTED = '#6b5f4a';
+
+    // Calculate required canvas dimensions
+    const wRoundCount = Object.keys(wRounds).length;
+    const lRoundCount = Object.keys(lRounds).length;
+    const totalRounds = Math.max(wRoundCount, lRoundCount) + (finals.length ? 1 : 0);
+
+    // Max boxes per half
+    const maxWBoxes = Math.max(...Object.values(wRounds).map(ms=>ms.length), 1);
+    const maxLBoxes = Math.max(...Object.values(lRounds).map(ms=>ms.length), 1);
+
+    const halfH = Math.max(maxWBoxes, 1) * (BOX_H*2+2+GAP_Y) + 60;
+    const H = halfH * 2;
+    const W = Math.max(totalRounds * ROUND_W + PAD*2 + BOX_W, 600);
+
+    canvas.width = W;
+    canvas.height = H;
+    canvas.style.width = W + 'px';
+    canvas.style.height = H + 'px';
 
     ctx.fillStyle = '#faf7f0';
     ctx.fillRect(0,0,W,H);
@@ -314,120 +325,126 @@
     // Section labels
     ctx.font = 'bold 10px IBM Plex Mono, monospace';
     ctx.fillStyle = MUTED;
-    ctx.letterSpacing = '2px';
-    ctx.fillText('WINNERS BRACKET', 16, 18);
-    ctx.fillText('LOSERS BRACKET', 16, H/2+12);
+    ctx.fillText('WINNERS BRACKET', PAD, 16);
+    ctx.fillText('LOSERS BRACKET', PAD, halfH + 16);
 
-    // Draw dividing line
+    // Dividing line
     ctx.strokeStyle = '#ddd';
     ctx.setLineDash([4,4]);
-    ctx.beginPath(); ctx.moveTo(0,H/2); ctx.lineTo(W,H/2); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0,halfH); ctx.lineTo(W,halfH); ctx.stroke();
     ctx.setLineDash([]);
 
-    const boxPositions = {}; // matchupIndex -> {x,y,w,h}
-
-    function drawMatchupBox(m, x, y, isCurrent, mIdx) {
-      const isComplete = !!m.winner;
-      // Box
-      ctx.fillStyle = isCurrent ? '#fff8e1' : 'white';
-      ctx.fillRect(x,y,BOX_W,BOX_H*2+2);
-      ctx.strokeStyle = isCurrent ? GOLD : (isComplete ? '#ccc' : INK);
-      ctx.lineWidth = isCurrent ? 2 : 1;
-      ctx.strokeRect(x,y,BOX_W,BOX_H*2+2);
-
-      // Divider
-      ctx.strokeStyle = isCurrent ? GOLD : '#ddd';
+    function drawBox(m, x, y, isCur, mIdx) {
+      const done = !!m.winner;
+      ctx.fillStyle = isCur ? '#fff8e1' : 'white';
+      ctx.fillRect(x, y, BOX_W, BOX_H*2+2);
+      ctx.strokeStyle = isCur ? GOLD : (done ? '#ccc' : INK);
+      ctx.lineWidth = isCur ? 2.5 : 1;
+      ctx.strokeRect(x, y, BOX_W, BOX_H*2+2);
+      // divider
+      ctx.strokeStyle = isCur ? GOLD : '#eee';
       ctx.lineWidth = 1;
-      ctx.beginPath(); ctx.moveTo(x,y+BOX_H+1); ctx.lineTo(x+BOX_W,y+BOX_H+1); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(x, y+BOX_H+1); ctx.lineTo(x+BOX_W, y+BOX_H+1); ctx.stroke();
 
-      // Names
-      ctx.font = '11px IBM Plex Sans, sans-serif';
       [m.a, m.b].forEach((name, ri) => {
-        const ty = y + ri*(BOX_H+2) + BOX_H*0.65;
-        const isWinner = m.winner===name;
-        const isLoser  = m.winner && m.winner!==name;
-        ctx.fillStyle = isWinner ? GREEN : isLoser ? '#bbb' : INK;
-        ctx.font = isWinner ? 'bold 11px IBM Plex Sans,sans-serif' : '11px IBM Plex Sans,sans-serif';
-        const label = trunc(name, 16) + (isWinner?' ✓':'');
-        ctx.fillText(label, x+6, ty);
-        // Vote bar
-        if (isComplete) {
+        const ty = y + ri*(BOX_H+2) + BOX_H*0.62;
+        const isW = m.winner===name, isL = m.winner && !isW;
+        ctx.fillStyle = isW ? GREEN : isL ? '#bbb' : INK;
+        ctx.font = isW ? 'bold 11px IBM Plex Sans,sans-serif' : '11px IBM Plex Sans,sans-serif';
+        ctx.fillText(trunc(name,17)+(isW?' ✓':''), x+6, ty);
+        if (done) {
           const tot=(m.aVotes||0)+(m.bVotes||0);
-          const votes = ri===0?m.aVotes:m.bVotes;
-          const pct = tot ? votes/tot : 0;
-          ctx.fillStyle = isWinner?'#c8f7c5':isLoser?'#fde8e8':'#eee';
-          ctx.fillRect(x+1,y+ri*(BOX_H+2)+BOX_H-8,Math.max(0,(BOX_W-2)*pct),6);
+          const v=ri===0?m.aVotes||0:m.bVotes||0;
+          const pct=tot?v/tot:0;
+          ctx.fillStyle=isW?'#c8f7c5':isL?'#fde8e8':'#eee';
+          ctx.fillRect(x+1, y+ri*(BOX_H+2)+BOX_H-7, Math.max(0,(BOX_W-2)*pct), 5);
         }
       });
-
-      boxPositions[mIdx] = {x,y,w:BOX_W,h:BOX_H*2+2};
     }
 
-    // Draw winners bracket
-    let wX = 24;
-    const wTopY = 28;
-    Object.entries(wRounds).forEach(([rn, ms]) => {
-      const totalH = ms.length*(BOX_H*2+2+GAP_Y)-GAP_Y;
-      const startY = wTopY + (H/2-28-totalH)/2;
-      ms.forEach((m, i) => {
-        const mIdx = matchups.indexOf(m);
-        const isCur = mIdx===currentIdx;
-        const y = startY + i*(BOX_H*2+2+GAP_Y);
-        drawMatchupBox(m, wX, y, isCur, mIdx);
-      });
-      wX += ROUND_W;
-    });
+    function drawConnector(x1, y1, x2, y2) {
+      ctx.strokeStyle = '#ccc';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      const mx = x1 + (x2-x1)/2;
+      ctx.lineTo(mx, y1);
+      ctx.lineTo(mx, y2);
+      ctx.lineTo(x2, y2);
+      ctx.stroke();
+    }
 
-    // Draw losers bracket
-    let lX = 24;
-    const lTopY = H/2+20;
-    Object.entries(lRounds).forEach(([rn, ms]) => {
-      const totalH = ms.length*(BOX_H*2+2+GAP_Y)-GAP_Y;
-      const startY = lTopY + (H/2-20-totalH)/2;
-      ms.forEach((m, i) => {
-        const mIdx = matchups.indexOf(m);
-        const isCur = mIdx===currentIdx;
-        const y = startY + i*(BOX_H*2+2+GAP_Y);
-        drawMatchupBox(m, lX, y, isCur, mIdx);
+    // Draw a bracket half and return box center positions keyed by matchup index
+    function drawHalf(rounds, topY, halfHeight) {
+      const positions = {}; // mIdx -> center {x, cy}
+      let x = PAD;
+      const roundKeys = Object.keys(rounds);
+      roundKeys.forEach((rn, ri) => {
+        const ms = rounds[rn];
+        ctx.font = 'bold 9px IBM Plex Mono,monospace';
+        ctx.fillStyle = MUTED;
+        ctx.fillText(rn, x, topY+4);
+        const totalH = ms.length*(BOX_H*2+2+GAP_Y)-GAP_Y;
+        const startY = topY + 10 + (halfHeight-30-totalH)/2;
+        ms.forEach((m, i) => {
+          const mIdx = matchups.indexOf(m);
+          const isCur = mIdx===currentIdx;
+          const y = startY + i*(BOX_H*2+2+GAP_Y);
+          drawBox(m, x, y, isCur, mIdx);
+          positions[mIdx] = { x, y, cx: x+BOX_W, cy: y+(BOX_H+1) };
+        });
+        x += ROUND_W;
       });
-      lX += ROUND_W;
-    });
 
-    // Draw grand final
+      // Draw connectors between consecutive rounds
+      for (let ri=0; ri<roundKeys.length-1; ri++) {
+        const thisMs = rounds[roundKeys[ri]];
+        const nextMs = rounds[roundKeys[ri+1]];
+        thisMs.forEach((m, i) => {
+          const mIdx = matchups.indexOf(m);
+          const pos = positions[mIdx];
+          if (!pos) return;
+          const nextIdx2 = matchups.indexOf(nextMs[Math.floor(i/2)]);
+          const npos = positions[nextIdx2];
+          if (!npos) return;
+          const targetY = npos.y + (i%2===0 ? BOX_H*0.5 : BOX_H*1.5+2);
+          drawConnector(pos.cx, pos.cy, npos.x, targetY);
+        });
+      }
+      return positions;
+    }
+
+    const wPositions = drawHalf(wRounds, 20, halfH);
+    const lPositions = drawHalf(lRounds, halfH+20, halfH);
+
+    // Grand final
     finals.forEach(m => {
       const mIdx = matchups.indexOf(m);
       const isCur = mIdx===currentIdx;
-      const x = W-BOX_W-24;
-      const y = H/2-(BOX_H*2+2)/2;
-      // Label
+      const x = W-BOX_W-PAD;
+      const y = H/2-(BOX_H+1);
       ctx.font = 'bold 10px IBM Plex Mono,monospace';
       ctx.fillStyle = ACCENT;
       ctx.fillText('GRAND FINAL', x, y-6);
-      drawMatchupBox(m, x, y, isCur, mIdx);
-    });
+      drawBox(m, x, y, isCur, mIdx);
 
-    // Connector lines (winners bracket)
-    ctx.strokeStyle = '#ccc';
-    ctx.lineWidth = 1;
-    const wRoundKeys = Object.keys(wRounds);
-    wX = 24;
-    for (let ri=0; ri<wRoundKeys.length-1; ri++) {
-      const thisMs = wRounds[wRoundKeys[ri]];
-      const nextMs = wRounds[wRoundKeys[ri+1]];
-      const totalH = thisMs.length*(BOX_H*2+2+GAP_Y)-GAP_Y;
-      const startY = wTopY+(H/2-28-totalH)/2;
-      thisMs.forEach((m,i) => {
-        const x1=wX+BOX_W, y1=startY+i*(BOX_H*2+2+GAP_Y)+(BOX_H+1);
-        const x2=wX+ROUND_W, y2mid=startY+Math.floor(i/2)*(BOX_H*2+2+GAP_Y)+(BOX_H+1)-(i%2?0:0);
-        ctx.beginPath();
-        ctx.moveTo(x1,y1);
-        ctx.lineTo(x1+15,y1);
-        ctx.lineTo(x1+15,y1+(i%2?-1:1)*(BOX_H+GAP_Y)/2);
-        ctx.lineTo(x2,y1+(i%2?-1:1)*(BOX_H+GAP_Y)/2);
-        ctx.stroke();
-      });
-      wX+=ROUND_W;
-    }
+      // Connect from last winners round
+      const wKeys = Object.keys(wRounds);
+      if (wKeys.length) {
+        const lastW = wRounds[wKeys[wKeys.length-1]];
+        const wIdx = matchups.indexOf(lastW[0]);
+        const wp = wPositions[wIdx];
+        if (wp) drawConnector(wp.cx, wp.cy, x, y+BOX_H*0.5);
+      }
+      // Connect from last losers round
+      const lKeys = Object.keys(lRounds);
+      if (lKeys.length) {
+        const lastL = lRounds[lKeys[lKeys.length-1]];
+        const lIdx = matchups.indexOf(lastL[0]);
+        const lp = lPositions[lIdx];
+        if (lp) drawConnector(lp.cx, lp.cy, x, y+BOX_H*1.5+2);
+      }
+    });
   }
 
   function groupByRound(matchups) {
@@ -464,6 +481,27 @@
     const url = base + '/vote.html';
     const el = document.getElementById('voter-url');
     if (el) el.textContent = url;
+    generateQR(url);
+  }
+
+  function generateQR(url) {
+    const container = document.getElementById('qr-container');
+    if (!container) return;
+    container.innerHTML = '';
+    // Use QRCode.js from CDN
+    const script = document.createElement('script');
+    script.src = 'https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js';
+    script.onload = () => {
+      new QRCode(container, {
+        text: url,
+        width: 160,
+        height: 160,
+        colorDark: '#1a1208',
+        colorLight: '#f5f0e8',
+        correctLevel: QRCode.CorrectLevel.M
+      });
+    };
+    document.head.appendChild(script);
   }
 
   // ── INIT ──
@@ -565,7 +603,8 @@
   /* BRACKET CANVAS PANEL */
   .bracket-panel{border:2px solid var(--ink);background:white;padding:0;}
   .bracket-title{font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:3px;text-transform:uppercase;color:var(--muted);padding:12px 16px 0;}
-  #bracket-canvas{width:100%;display:block;cursor:default;}
+  .bracket-scroll{overflow-x:auto;overflow-y:auto;-webkit-overflow-scrolling:touch;}
+  #bracket-canvas{display:block;cursor:default;}
 
   /* RESULTS */
   .results-body{max-width:680px;margin:0 auto;padding:32px 24px;text-align:center;}
@@ -651,6 +690,8 @@
         <div class="join-panel">
           <div class="join-headline">Voter URL — share with audience</div>
           <div class="join-url" id="voter-url">—</div>
+          <div id="qr-container" style="margin:12px auto 4px;display:flex;justify-content:center;"></div>
+          <div style="font-family:'IBM Plex Mono',monospace;font-size:9px;color:var(--muted);text-align:center;letter-spacing:1px;">SCAN TO VOTE</div>
         </div>
 
         <div class="elim-section">
@@ -663,7 +704,9 @@
       <div>
         <div class="bracket-panel">
           <div class="bracket-title">Tournament Bracket</div>
-          <canvas id="bracket-canvas" height="420"></canvas>
+          <div class="bracket-scroll">
+            <canvas id="bracket-canvas" height="420"></canvas>
+          </div>
         </div>
       </div>
     </div>
