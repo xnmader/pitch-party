@@ -1,0 +1,732 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>The Current — Pitch Party Host</title>
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+  import { getDatabase, ref, set, get, onValue, update, runTransaction }
+    from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyALghQ8pnAl7q6LFaMmfptGoP8wG8Uqoe8",
+    authDomain: "pitch-party-86d2e.firebaseapp.com",
+    databaseURL: "https://pitch-party-86d2e-default-rtdb.firebaseio.com",
+    projectId: "pitch-party-86d2e",
+    storageBucket: "pitch-party-86d2e.firebasestorage.app",
+    messagingSenderId: "1066611379387",
+    appId: "1:1066611379387:web:aefb55fe0c931e5870ad9e"
+  };
+
+  const app = initializeApp(firebaseConfig);
+  const db = getDatabase(app);
+
+  const DEFAULT_PITCHES = [
+    "The Bridge Ministry",
+    "The Mouton Land Question",
+    "LPSS Satellite Bus Stops",
+    "E-bikes and Scooters",
+    "Cy, Age 5: Trucks",
+    "I-49 'Go West at Carencro'",
+    "Noise Pollution",
+    "Downtown Grocery Desert",
+    "Recycling Scam?",
+    "North Lafayette Development",
+    "DEQ Chemtrail Reports",
+    "The Flag Runner",
+    "Short-Term Rental Enforcement",
+    "The Freeze",
+    "Right On Fashion",
+    "Bus Stop Shelter Gap",
+    "Palantir & Flock Cameras",
+    "Road Striping"
+  ];
+
+  const VOTE_DURATION = 30;
+  let timerInterval = null;
+  let stateUnsub = null;
+  let lastState = null;
+
+  // ── SCREENS ──
+  function showScreen(id) {
+    document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+    document.getElementById(id).classList.add('active');
+  }
+
+  // ── SETUP ──
+  function renderSetup() {
+    const grid = document.getElementById('pitch-grid');
+    grid.innerHTML = '';
+    DEFAULT_PITCHES.forEach((p, i) => {
+      const card = document.createElement('div');
+      card.className = 'pitch-card';
+      card.innerHTML = `<div class="pitch-num">Pitch #${i+1}</div>
+        <input type="text" id="pi${i}" value="${p}"
+          style="font-family:'Playfair Display',serif;font-size:14px;font-weight:700;border:none;width:100%;outline:none;background:transparent;color:#1a1208;">`;
+      grid.appendChild(card);
+    });
+  }
+
+  function shuffle(arr) {
+    const a = [...arr];
+    for (let i = a.length-1; i > 0; i--) {
+      const j = Math.floor(Math.random()*(i+1));
+      [a[i],a[j]]=[a[j],a[i]];
+    }
+    return a;
+  }
+
+  window.startTournament = async function() {
+    const pitches = DEFAULT_PITCHES.map((p,i) => {
+      const el = document.getElementById(`pi${i}`);
+      return el ? (el.value.trim()||p) : p;
+    });
+    const shuffled = shuffle(pitches);
+    const competitors = shuffled.map(name => ({ name, wins:0, losses:0, eliminated:false }));
+    const matchups = makeWinnersMatchups(competitors, 1);
+    await set(ref(db,'tournament'), {
+      competitors, matchups,
+      currentMatchupIndex: 0,
+      timerSeconds: VOTE_DURATION,
+      votingOpen: false,
+      tournamentStarted: true,
+      tournamentComplete: false,
+      roundNumber: 1,
+      ts: Date.now()
+    });
+    await set(ref(db,'votes'), null);
+    showScreen('host-screen');
+    subscribeState();
+    updateVoterURL();
+  };
+
+  function makeWinnersMatchups(competitors, round) {
+    const alive = competitors.filter(c => !c.eliminated && c.losses===0);
+    const out = [];
+    for (let i=0; i+1<alive.length; i+=2) {
+      out.push({ a:alive[i].name, b:alive[i+1].name,
+        winner:null, aVotes:0, bVotes:0,
+        round:`Round ${round}`, bracket:'winners', tiebreak:false });
+    }
+    if (alive.length%2!==0) {
+      // Bye — give the odd one out a win automatically, no matchup needed
+    }
+    return out;
+  }
+
+  function makeNextRoundMatchups(competitors, roundNumber) {
+    const wAlive = competitors.filter(c => !c.eliminated && c.losses===0);
+    const lAlive = competitors.filter(c => !c.eliminated && c.losses===1);
+    const allAlive = competitors.filter(c => !c.eliminated);
+    if (allAlive.length<=1) return [];
+    if (wAlive.length===1 && lAlive.length===1) {
+      return [{ a:wAlive[0].name, b:lAlive[0].name,
+        winner:null, aVotes:0, bVotes:0, round:'Grand Final', bracket:'final', tiebreak:false }];
+    }
+    const out = [];
+    for (let i=0; i+1<wAlive.length; i+=2)
+      out.push({ a:wAlive[i].name, b:wAlive[i+1].name,
+        winner:null, aVotes:0, bVotes:0, round:`Round ${roundNumber}`, bracket:'winners', tiebreak:false });
+    for (let i=0; i+1<lAlive.length; i+=2)
+      out.push({ a:lAlive[i].name, b:lAlive[i+1].name,
+        winner:null, aVotes:0, bVotes:0, round:`Losers R${roundNumber}`, bracket:'losers', tiebreak:false });
+    return out;
+  }
+
+  // ── SUBSCRIBE ──
+  function subscribeState() {
+    if (stateUnsub) stateUnsub();
+    stateUnsub = onValue(ref(db,'tournament'), snap => {
+      const s = snap.val();
+      if (!s) return;
+      lastState = s;
+      renderHost(s);
+    });
+  }
+
+  // ── HOST CONTROLS ──
+  window.startMatchup = async function() {
+    if (timerInterval) clearInterval(timerInterval);
+    await update(ref(db,'tournament'), { votingOpen:true, timerSeconds:VOTE_DURATION, ts:Date.now() });
+    document.getElementById('start-btn').style.display='none';
+    document.getElementById('end-early-btn').style.display='inline-block';
+    let secs = VOTE_DURATION;
+    timerInterval = setInterval(async () => {
+      secs--;
+      await update(ref(db,'tournament'), { timerSeconds:secs, ts:Date.now() });
+      if (secs<=0) { clearInterval(timerInterval); await closeMatchup(); }
+    }, 1000);
+  };
+
+  window.endVoteEarly = async function() {
+    if (timerInterval) clearInterval(timerInterval);
+    await update(ref(db,'tournament'), { timerSeconds:0, ts:Date.now() });
+    await closeMatchup();
+  };
+
+  async function closeMatchup() {
+    document.getElementById('end-early-btn').style.display='none';
+    const snap = await get(ref(db,'tournament'));
+    const s = snap.val();
+    if (!s) return;
+    const idx = s.currentMatchupIndex;
+    const m = s.matchups[idx];
+    if (!m) return;
+    const winnerName = m.aVotes>=m.bVotes ? m.a : m.b;
+    const loserName  = m.aVotes>=m.bVotes ? m.b : m.a;
+    const tiebreak   = m.aVotes===m.bVotes;
+    const matchups = [...s.matchups];
+    matchups[idx] = {...m, winner:winnerName, tiebreak};
+    const competitors = s.competitors.map(c => {
+      if (c.name===winnerName) return {...c, wins:c.wins+1};
+      if (c.name===loserName) { const l=c.losses+1; return {...c, losses:l, eliminated:l>=2}; }
+      return c;
+    });
+    await update(ref(db,'tournament'), { matchups, competitors, votingOpen:false, ts:Date.now() });
+  }
+
+  window.advanceMatchup = async function() {
+    const snap = await get(ref(db,'tournament'));
+    const s = snap.val();
+    if (!s) return;
+    const nextIdx = s.currentMatchupIndex+1;
+    let matchups = [...s.matchups];
+    let roundNumber = s.roundNumber;
+    let tournamentComplete = false;
+    if (nextIdx>=matchups.length) {
+      roundNumber++;
+      const newM = makeNextRoundMatchups(s.competitors, roundNumber);
+      if (newM.length===0) tournamentComplete=true;
+      else matchups=[...matchups,...newM];
+    }
+    await update(ref(db,'tournament'), {
+      currentMatchupIndex:nextIdx, matchups, roundNumber,
+      tournamentComplete, timerSeconds:VOTE_DURATION, votingOpen:false, ts:Date.now()
+    });
+  };
+
+  window.resetTournament = async function() {
+    if (!confirm('Reset the entire tournament? This cannot be undone.')) return;
+    if (timerInterval) clearInterval(timerInterval);
+    await set(ref(db,'tournament'), null);
+    await set(ref(db,'votes'), null);
+    showScreen('setup-screen');
+    renderSetup();
+  };
+
+  // ── RENDER HOST ──
+  function renderHost(s) {
+    if (s.tournamentComplete) { renderResults(s); return; }
+    const idx = s.currentMatchupIndex;
+    const m = (s.matchups||[])[idx];
+    if (!m) { renderResults(s); return; }
+
+    document.getElementById('host-round-label').textContent = `${m.round} — Double Elimination`;
+    document.getElementById('matchup-round-badge').textContent = m.round;
+    document.getElementById('comp-a-name').textContent = m.a;
+    document.getElementById('comp-b-name').textContent = m.b;
+
+    const aV=m.aVotes||0, bV=m.bVotes||0, tot=aV+bV;
+    document.getElementById('comp-a-votes').textContent = aV;
+    document.getElementById('comp-b-votes').textContent = bV;
+    document.getElementById('vote-total').textContent = `${tot} vote${tot!==1?'s':''} cast`+(m.tiebreak?' — tiebreak':'');
+
+    // Live vote bars
+    const aPct = tot ? Math.round(aV/tot*100) : 50;
+    const bPct = tot ? Math.round(bV/tot*100) : 50;
+    document.getElementById('bar-a').style.width = aPct+'%';
+    document.getElementById('bar-b').style.width = bPct+'%';
+    document.getElementById('pct-a').textContent = tot ? aPct+'%' : '';
+    document.getElementById('pct-b').textContent = tot ? bPct+'%' : '';
+
+    document.getElementById('comp-a').classList.toggle('leading', aV>bV);
+    document.getElementById('comp-b').classList.toggle('leading', bV>aV);
+
+    const secs = s.timerSeconds!==undefined ? s.timerSeconds : VOTE_DURATION;
+    const tEl = document.getElementById('host-timer');
+    tEl.textContent = secs;
+    tEl.classList.toggle('urgent', secs<=10);
+    const bar = document.getElementById('timer-bar');
+    if (bar) bar.style.width = Math.max(0,secs/VOTE_DURATION*100)+'%';
+
+    const sb=document.getElementById('start-btn');
+    const nb=document.getElementById('next-btn');
+    const eb=document.getElementById('end-early-btn');
+    if (m.winner) {
+      sb.style.display='none'; nb.style.display='inline-block'; eb.style.display='none';
+    } else if (s.votingOpen) {
+      sb.style.display='none'; nb.style.display='none'; eb.style.display='inline-block';
+    } else {
+      sb.style.display='inline-block'; nb.style.display='none'; eb.style.display='none';
+    }
+
+    if (m.winner) {
+      const resultLabel = document.getElementById('matchup-result');
+      resultLabel.textContent = `✓ ${m.winner} advances${m.tiebreak?' (tiebreak)':''}`;
+      resultLabel.style.display='block';
+    } else {
+      document.getElementById('matchup-result').style.display='none';
+    }
+
+    renderField(s.competitors||[]);
+    renderBracketTree(s.matchups||[], s.competitors||[], idx);
+  }
+
+  function renderField(competitors) {
+    const el=document.getElementById('field-status');
+    if (!el) return;
+    el.innerHTML='';
+    competitors.forEach(c => {
+      const p=document.createElement('span');
+      p.textContent = c.eliminated?c.name:c.losses===1?`⚠ ${c.name}`:`✓ ${c.name}`;
+      p.className = c.eliminated?'elim-pill':c.losses===1?'loss1-pill':'alive-pill';
+      el.appendChild(p);
+    });
+  }
+
+  // ── BRACKET TREE ──
+  function renderBracketTree(matchups, competitors, currentIdx) {
+    const canvas = document.getElementById('bracket-canvas');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+
+    const winners = matchups.filter(m=>m.bracket==='winners');
+    const losers  = matchups.filter(m=>m.bracket==='losers');
+    const finals  = matchups.filter(m=>m.bracket==='final');
+    const wRounds = groupByRound(winners);
+    const lRounds = groupByRound(losers);
+
+    const BOX_W = 140, BOX_H = 38, GAP_Y = 12, ROUND_W = 170, PAD = 20;
+    const INK = '#1a1208', ACCENT = '#c8392b', GOLD = '#d4a017';
+    const GREEN = '#2e7d32', MUTED = '#6b5f4a';
+
+    // Calculate required canvas dimensions
+    const wRoundCount = Object.keys(wRounds).length;
+    const lRoundCount = Object.keys(lRounds).length;
+    const totalRounds = Math.max(wRoundCount, lRoundCount) + (finals.length ? 1 : 0);
+
+    // Max boxes per half
+    const maxWBoxes = Math.max(...Object.values(wRounds).map(ms=>ms.length), 1);
+    const maxLBoxes = Math.max(...Object.values(lRounds).map(ms=>ms.length), 1);
+
+    const halfH = Math.max(maxWBoxes, 1) * (BOX_H*2+2+GAP_Y) + 60;
+    const H = halfH * 2;
+    const W = Math.max(totalRounds * ROUND_W + PAD*2 + BOX_W, 600);
+
+    canvas.width = W;
+    canvas.height = H;
+    canvas.style.width = W + 'px';
+    canvas.style.height = H + 'px';
+
+    ctx.fillStyle = '#faf7f0';
+    ctx.fillRect(0,0,W,H);
+
+    // Section labels
+    ctx.font = 'bold 10px IBM Plex Mono, monospace';
+    ctx.fillStyle = MUTED;
+    ctx.fillText('WINNERS BRACKET', PAD, 16);
+    ctx.fillText('LOSERS BRACKET', PAD, halfH + 16);
+
+    // Dividing line
+    ctx.strokeStyle = '#ddd';
+    ctx.setLineDash([4,4]);
+    ctx.beginPath(); ctx.moveTo(0,halfH); ctx.lineTo(W,halfH); ctx.stroke();
+    ctx.setLineDash([]);
+
+    function drawBox(m, x, y, isCur, mIdx) {
+      const done = !!m.winner;
+      ctx.fillStyle = isCur ? '#fff8e1' : 'white';
+      ctx.fillRect(x, y, BOX_W, BOX_H*2+2);
+      ctx.strokeStyle = isCur ? GOLD : (done ? '#ccc' : INK);
+      ctx.lineWidth = isCur ? 2.5 : 1;
+      ctx.strokeRect(x, y, BOX_W, BOX_H*2+2);
+      // divider
+      ctx.strokeStyle = isCur ? GOLD : '#eee';
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(x, y+BOX_H+1); ctx.lineTo(x+BOX_W, y+BOX_H+1); ctx.stroke();
+
+      [m.a, m.b].forEach((name, ri) => {
+        const ty = y + ri*(BOX_H+2) + BOX_H*0.62;
+        const isW = m.winner===name, isL = m.winner && !isW;
+        ctx.fillStyle = isW ? GREEN : isL ? '#bbb' : INK;
+        ctx.font = isW ? 'bold 11px IBM Plex Sans,sans-serif' : '11px IBM Plex Sans,sans-serif';
+        ctx.fillText(trunc(name,17)+(isW?' ✓':''), x+6, ty);
+        if (done) {
+          const tot=(m.aVotes||0)+(m.bVotes||0);
+          const v=ri===0?m.aVotes||0:m.bVotes||0;
+          const pct=tot?v/tot:0;
+          ctx.fillStyle=isW?'#c8f7c5':isL?'#fde8e8':'#eee';
+          ctx.fillRect(x+1, y+ri*(BOX_H+2)+BOX_H-7, Math.max(0,(BOX_W-2)*pct), 5);
+        }
+      });
+    }
+
+    function drawConnector(x1, y1, x2, y2) {
+      ctx.strokeStyle = '#ccc';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      const mx = x1 + (x2-x1)/2;
+      ctx.lineTo(mx, y1);
+      ctx.lineTo(mx, y2);
+      ctx.lineTo(x2, y2);
+      ctx.stroke();
+    }
+
+    // Draw a bracket half and return box center positions keyed by matchup index
+    function drawHalf(rounds, topY, halfHeight) {
+      const positions = {}; // mIdx -> center {x, cy}
+      let x = PAD;
+      const roundKeys = Object.keys(rounds);
+      roundKeys.forEach((rn, ri) => {
+        const ms = rounds[rn];
+        ctx.font = 'bold 9px IBM Plex Mono,monospace';
+        ctx.fillStyle = MUTED;
+        ctx.fillText(rn, x, topY+4);
+        const totalH = ms.length*(BOX_H*2+2+GAP_Y)-GAP_Y;
+        const startY = topY + 10 + (halfHeight-30-totalH)/2;
+        ms.forEach((m, i) => {
+          const mIdx = matchups.indexOf(m);
+          const isCur = mIdx===currentIdx;
+          const y = startY + i*(BOX_H*2+2+GAP_Y);
+          drawBox(m, x, y, isCur, mIdx);
+          positions[mIdx] = { x, y, cx: x+BOX_W, cy: y+(BOX_H+1) };
+        });
+        x += ROUND_W;
+      });
+
+      // Draw connectors between consecutive rounds
+      for (let ri=0; ri<roundKeys.length-1; ri++) {
+        const thisMs = rounds[roundKeys[ri]];
+        const nextMs = rounds[roundKeys[ri+1]];
+        thisMs.forEach((m, i) => {
+          const mIdx = matchups.indexOf(m);
+          const pos = positions[mIdx];
+          if (!pos) return;
+          const nextIdx2 = matchups.indexOf(nextMs[Math.floor(i/2)]);
+          const npos = positions[nextIdx2];
+          if (!npos) return;
+          const targetY = npos.y + (i%2===0 ? BOX_H*0.5 : BOX_H*1.5+2);
+          drawConnector(pos.cx, pos.cy, npos.x, targetY);
+        });
+      }
+      return positions;
+    }
+
+    const wPositions = drawHalf(wRounds, 20, halfH);
+    const lPositions = drawHalf(lRounds, halfH+20, halfH);
+
+    // Grand final
+    finals.forEach(m => {
+      const mIdx = matchups.indexOf(m);
+      const isCur = mIdx===currentIdx;
+      const x = W-BOX_W-PAD;
+      const y = H/2-(BOX_H+1);
+      ctx.font = 'bold 10px IBM Plex Mono,monospace';
+      ctx.fillStyle = ACCENT;
+      ctx.fillText('GRAND FINAL', x, y-6);
+      drawBox(m, x, y, isCur, mIdx);
+
+      // Connect from last winners round
+      const wKeys = Object.keys(wRounds);
+      if (wKeys.length) {
+        const lastW = wRounds[wKeys[wKeys.length-1]];
+        const wIdx = matchups.indexOf(lastW[0]);
+        const wp = wPositions[wIdx];
+        if (wp) drawConnector(wp.cx, wp.cy, x, y+BOX_H*0.5);
+      }
+      // Connect from last losers round
+      const lKeys = Object.keys(lRounds);
+      if (lKeys.length) {
+        const lastL = lRounds[lKeys[lKeys.length-1]];
+        const lIdx = matchups.indexOf(lastL[0]);
+        const lp = lPositions[lIdx];
+        if (lp) drawConnector(lp.cx, lp.cy, x, y+BOX_H*1.5+2);
+      }
+    });
+  }
+
+  function groupByRound(matchups) {
+    const rounds = {};
+    matchups.forEach(m => { (rounds[m.round]||(rounds[m.round]=[])).push(m); });
+    return rounds;
+  }
+
+  function trunc(s,n) { return s.length>n?s.slice(0,n)+'…':s; }
+
+  // ── RESULTS ──
+  function renderResults(s) {
+    showScreen('results-screen');
+    const el = document.getElementById('results-content');
+    const alive = (s.competitors||[]).filter(c=>!c.eliminated);
+    const champ = alive.length===1?alive[0]:
+      (s.competitors||[]).reduce((b,c)=>(!b||c.wins>b.wins)?c:b,null);
+    const sorted = [...(s.competitors||[])].sort((a,b)=>b.wins-a.wins||a.losses-b.losses);
+    el.innerHTML = `
+      <div class="results-eyebrow">The People Have Spoken</div>
+      <div class="winner-headline">The Current Will Report</div>
+      <div class="winner-name">${champ?champ.name:'—'}</div>
+      <table class="results-table">
+        <thead><tr><th>#</th><th>Pitch</th><th>W</th><th>L</th><th>Status</th></tr></thead>
+        <tbody>${sorted.map((c,i)=>`<tr${i===0?' class="top"':''}>
+          <td>${i+1}</td><td>${c.name}</td><td>${c.wins}</td><td>${c.losses}</td>
+          <td>${c.eliminated?'❌':c.losses===1?'⚠ One loss':'✓'}</td></tr>`).join('')}
+        </tbody>
+      </table>`;
+  }
+
+  function updateVoterURL() {
+    const base = window.location.href.replace('index.html','').replace(/\/$/, '');
+    const url = base + '/vote.html';
+    const el = document.getElementById('voter-url');
+    if (el) el.textContent = url;
+    generateQR(url);
+  }
+
+  function generateQR(url) {
+    const container = document.getElementById('qr-container');
+    if (!container) return;
+    container.innerHTML = '';
+    // Use QRCode.js from CDN
+    const script = document.createElement('script');
+    script.src = 'https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js';
+    script.onload = () => {
+      new QRCode(container, {
+        text: url,
+        width: 160,
+        height: 160,
+        colorDark: '#1a1208',
+        colorLight: '#f5f0e8',
+        correctLevel: QRCode.CorrectLevel.M
+      });
+    };
+    document.head.appendChild(script);
+  }
+
+  // ── INIT ──
+  get(ref(db,'tournament')).then(snap => {
+    const s = snap.val();
+    if (s && s.tournamentStarted && !s.tournamentComplete) {
+      showScreen('host-screen');
+      subscribeState();
+      updateVoterURL();
+    } else if (s && s.tournamentComplete) {
+      renderResults(s);
+    } else {
+      showScreen('setup-screen');
+      renderSetup();
+    }
+  });
+
+  // Resize bracket canvas on window resize
+  window.addEventListener('resize', () => {
+    if (lastState) renderBracketTree(lastState.matchups||[], lastState.competitors||[], lastState.currentMatchupIndex||0);
+  });
+</script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700;900&family=IBM+Plex+Mono:wght@400;500;700&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap');
+  :root{--ink:#1a1208;--paper:#f5f0e8;--accent:#c8392b;--gold:#d4a017;--muted:#6b5f4a;}
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{font-family:'IBM Plex Sans',sans-serif;background:var(--paper);color:var(--ink);min-height:100vh;}
+  .screen{display:none;}.screen.active{display:block;}
+
+  /* MASTHEAD */
+  .masthead{border-bottom:3px double var(--ink);padding:14px 24px 10px;text-align:center;background:var(--paper);}
+  .masthead-eyebrow{font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:3px;text-transform:uppercase;color:var(--muted);margin-bottom:3px;}
+  .masthead h1{font-family:'Playfair Display',serif;font-size:clamp(24px,4vw,44px);font-weight:900;line-height:1;letter-spacing:-1px;}
+  .masthead h1 span{color:var(--accent);}
+  .masthead-sub{font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:2px;text-transform:uppercase;color:var(--muted);margin-top:5px;border-top:1px solid var(--ink);padding-top:5px;}
+
+  /* BUTTONS */
+  .btn{font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:700;letter-spacing:1px;text-transform:uppercase;border:2px solid var(--ink);padding:10px 22px;cursor:pointer;background:var(--ink);color:var(--paper);transition:all .15s;}
+  .btn:hover{background:var(--accent);border-color:var(--accent);}
+  .btn.secondary{background:transparent;color:var(--ink);}
+  .btn.secondary:hover{background:var(--ink);color:var(--paper);}
+  .btn.danger{background:var(--accent);border-color:var(--accent);}
+  .btn.danger:hover{background:#a93226;border-color:#a93226;}
+  .btn-row{display:flex;gap:10px;flex-wrap:wrap;}
+
+  /* SETUP */
+  .setup-body{max-width:900px;margin:0 auto;padding:28px 24px;}
+  .setup-headline{font-family:'Playfair Display',serif;font-size:26px;font-weight:700;margin-bottom:6px;}
+  .setup-deck{font-size:13px;color:var(--muted);margin-bottom:28px;font-family:'IBM Plex Mono',monospace;}
+  .pitch-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px;margin-bottom:28px;}
+  .pitch-card{border:1px solid var(--ink);padding:10px 12px;background:white;}
+  .pitch-num{font-family:'IBM Plex Mono',monospace;font-size:9px;color:var(--muted);margin-bottom:3px;letter-spacing:1px;}
+
+  /* HOST LAYOUT */
+  .host-body{max-width:1400px;margin:0 auto;padding:16px 20px;}
+  .host-grid{display:grid;grid-template-columns:400px 1fr;gap:20px;align-items:start;}
+
+  /* MATCHUP CARD */
+  .matchup-card{border:3px solid var(--ink);background:white;padding:20px;}
+  .matchup-label{font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:3px;text-transform:uppercase;color:var(--muted);margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;}
+  .round-badge{background:var(--ink);color:var(--paper);font-family:'IBM Plex Mono',monospace;font-size:9px;padding:3px 7px;letter-spacing:1px;}
+
+  /* TIMER */
+  .timer-block{text-align:center;margin-bottom:16px;}
+  .timer-display{font-family:'IBM Plex Mono',monospace;font-size:56px;font-weight:700;line-height:1;color:var(--ink);transition:color .3s;}
+  .timer-display.urgent{color:var(--accent);animation:pulse .5s infinite alternate;}
+  @keyframes pulse{from{opacity:1}to{opacity:.5}}
+  .timer-label{font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:3px;text-transform:uppercase;color:var(--muted);}
+  .timer-bar-wrap{height:5px;background:#ddd;margin:10px 0 16px;}
+  .timer-bar{height:100%;background:var(--accent);transition:width 1s linear;}
+
+  /* COMPETITORS */
+  .versus-row{display:grid;grid-template-columns:1fr 36px 1fr;gap:8px;align-items:center;margin-bottom:12px;}
+  .competitor{border:2px solid var(--ink);padding:12px;text-align:center;transition:background .3s;}
+  .competitor.leading{background:#fff8e1;border-color:var(--gold);}
+  .competitor-name{font-family:'Playfair Display',serif;font-size:14px;font-weight:700;line-height:1.3;margin-bottom:6px;}
+  .competitor-votes{font-family:'IBM Plex Mono',monospace;font-size:24px;font-weight:700;color:var(--accent);}
+  .vote-bar-wrap{height:8px;background:#eee;margin-top:6px;border-radius:0;}
+  .vote-bar{height:100%;background:var(--accent);transition:width .4s ease;border-radius:0;}
+  .competitor-pct{font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--muted);margin-top:3px;}
+  .vs-label{font-family:'Playfair Display',serif;font-size:18px;font-weight:900;text-align:center;color:var(--muted);}
+  .vote-total{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--muted);text-align:center;margin-bottom:12px;}
+  .matchup-result{font-family:'IBM Plex Mono',monospace;font-size:11px;color:#2e7d32;text-align:center;margin-bottom:12px;display:none;padding:6px;background:#e8f5e9;}
+  .host-controls{display:flex;gap:8px;flex-wrap:wrap;justify-content:center;}
+
+  /* JOIN PANEL */
+  .join-panel{border:1px solid #ccc;padding:14px;background:white;margin-top:14px;}
+  .join-headline{font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:2px;text-transform:uppercase;color:var(--muted);margin-bottom:8px;}
+  .join-url{font-family:'IBM Plex Mono',monospace;font-size:11px;background:var(--ink);color:var(--paper);padding:7px 10px;word-break:break-all;}
+
+  /* FIELD STATUS */
+  .elim-section{margin-top:14px;}
+  .elim-title{font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:3px;text-transform:uppercase;color:var(--muted);margin-bottom:6px;}
+  .elim-pills{display:flex;flex-wrap:wrap;gap:5px;}
+  .elim-pill{font-family:'IBM Plex Mono',monospace;font-size:8px;padding:2px 7px;background:#eee;color:#999;text-decoration:line-through;}
+  .alive-pill{font-family:'IBM Plex Mono',monospace;font-size:8px;padding:2px 7px;background:#e8f5e9;color:#2e7d32;}
+  .loss1-pill{font-family:'IBM Plex Mono',monospace;font-size:8px;padding:2px 7px;background:#fff3e0;color:#e65100;}
+
+  /* BRACKET CANVAS PANEL */
+  .bracket-panel{border:2px solid var(--ink);background:white;padding:0;}
+  .bracket-title{font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:3px;text-transform:uppercase;color:var(--muted);padding:12px 16px 0;}
+  .bracket-scroll{overflow-x:auto;overflow-y:auto;-webkit-overflow-scrolling:touch;}
+  #bracket-canvas{display:block;cursor:default;}
+
+  /* RESULTS */
+  .results-body{max-width:680px;margin:0 auto;padding:32px 24px;text-align:center;}
+  .results-eyebrow{font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:3px;text-transform:uppercase;color:var(--muted);}
+  .winner-headline{font-family:'Playfair Display',serif;font-size:clamp(22px,4vw,36px);font-weight:900;margin:20px 0 8px;line-height:1.2;}
+  .winner-name{font-family:'Playfair Display',serif;font-size:clamp(18px,3vw,28px);font-weight:700;color:var(--accent);margin-bottom:24px;padding:14px 20px;border:3px double var(--accent);display:inline-block;}
+  .results-table{width:100%;border-collapse:collapse;margin:20px 0;text-align:left;}
+  .results-table th{font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:2px;text-transform:uppercase;border-bottom:2px solid var(--ink);padding:7px 10px;}
+  .results-table td{font-family:'IBM Plex Sans',sans-serif;font-size:13px;padding:7px 10px;border-bottom:1px solid #ddd;}
+  .results-table tr.top td{font-weight:700;color:var(--accent);}
+
+  @media(max-width:900px){
+    .host-grid{grid-template-columns:1fr;}
+    .versus-row{grid-template-columns:1fr 28px 1fr;}
+  }
+</style>
+</head>
+<body>
+
+<!-- SETUP -->
+<div id="setup-screen" class="screen active">
+  <div class="masthead">
+    <div class="masthead-eyebrow">Lafayette's Independent News Source</div>
+    <h1>The <span>Current</span></h1>
+    <div class="masthead-sub">Host Setup</div>
+  </div>
+  <div class="setup-body">
+    <div class="setup-headline">Confirm the Pitches</div>
+    <div class="setup-deck">18 pitches loaded — edit titles if needed, then randomize and begin</div>
+    <div class="pitch-grid" id="pitch-grid"></div>
+    <div class="btn-row">
+      <button class="btn" onclick="startTournament()">🎲 Randomize Bracket &amp; Begin</button>
+    </div>
+  </div>
+</div>
+
+<!-- HOST -->
+<div id="host-screen" class="screen">
+  <div class="masthead">
+    <div class="masthead-eyebrow">Lafayette's Independent News Source — Host View</div>
+    <h1>The <span>Current</span></h1>
+    <div class="masthead-sub" id="host-round-label">Double Elimination Tournament</div>
+  </div>
+  <div class="host-body">
+    <div class="host-grid">
+      <!-- LEFT: controls -->
+      <div>
+        <div class="matchup-card">
+          <div class="matchup-label">
+            <span>Current Matchup</span>
+            <span class="round-badge" id="matchup-round-badge">—</span>
+          </div>
+          <div class="timer-block">
+            <div class="timer-display" id="host-timer">30</div>
+            <div class="timer-label">seconds remaining</div>
+            <div class="timer-bar-wrap"><div class="timer-bar" id="timer-bar" style="width:100%"></div></div>
+          </div>
+          <div class="versus-row">
+            <div class="competitor" id="comp-a">
+              <div class="competitor-name" id="comp-a-name">—</div>
+              <div class="competitor-votes" id="comp-a-votes">0</div>
+              <div class="vote-bar-wrap"><div class="vote-bar" id="bar-a" style="width:50%"></div></div>
+              <div class="competitor-pct" id="pct-a"></div>
+            </div>
+            <div class="vs-label">vs</div>
+            <div class="competitor" id="comp-b">
+              <div class="competitor-name" id="comp-b-name">—</div>
+              <div class="competitor-votes" id="comp-b-votes">0</div>
+              <div class="vote-bar-wrap"><div class="vote-bar" id="bar-b" style="width:50%"></div></div>
+              <div class="competitor-pct" id="pct-b"></div>
+            </div>
+          </div>
+          <div class="vote-total" id="vote-total">—</div>
+          <div class="matchup-result" id="matchup-result"></div>
+          <div class="host-controls">
+            <button class="btn" id="start-btn" onclick="startMatchup()">▶ Start Voting</button>
+            <button class="btn danger" id="end-early-btn" onclick="endVoteEarly()" style="display:none">⏹ End Vote Early</button>
+            <button class="btn secondary" id="next-btn" onclick="advanceMatchup()" style="display:none">Next Matchup →</button>
+            <button class="btn secondary" onclick="resetTournament()" style="border-color:#bbb;color:#999;font-size:10px;padding:8px 14px;">Reset</button>
+          </div>
+        </div>
+
+        <div class="join-panel">
+          <div class="join-headline">Voter URL — share with audience</div>
+          <div class="join-url" id="voter-url">—</div>
+          <div id="qr-container" style="margin:12px auto 4px;display:flex;justify-content:center;"></div>
+          <div style="font-family:'IBM Plex Mono',monospace;font-size:9px;color:var(--muted);text-align:center;letter-spacing:1px;">SCAN TO VOTE</div>
+        </div>
+
+        <div class="elim-section">
+          <div class="elim-title">Field Status</div>
+          <div class="elim-pills" id="field-status"></div>
+        </div>
+      </div>
+
+      <!-- RIGHT: bracket -->
+      <div>
+        <div class="bracket-panel">
+          <div class="bracket-title">Tournament Bracket</div>
+          <div class="bracket-scroll">
+            <canvas id="bracket-canvas" height="420"></canvas>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- RESULTS -->
+<div id="results-screen" class="screen">
+  <div class="masthead">
+    <div class="masthead-eyebrow">Lafayette's Independent News Source</div>
+    <h1>The <span>Current</span></h1>
+    <div class="masthead-sub">Tournament Results</div>
+  </div>
+  <div class="results-body">
+    <div id="results-content"></div>
+    <div class="btn-row" style="justify-content:center;margin-top:24px;">
+      <button class="btn" onclick="resetTournament()">Start New Tournament</button>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>
