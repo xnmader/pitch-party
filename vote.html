@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>The Current — Vote</title>
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+  import { getDatabase, ref, set, get, onValue, runTransaction }
+    from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyALghQ8pnAl7q6LFaMmfptGoP8wG8Uqoe8",
+    authDomain: "pitch-party-86d2e.firebaseapp.com",
+    databaseURL: "https://pitch-party-86d2e-default-rtdb.firebaseio.com",
+    projectId: "pitch-party-86d2e",
+    storageBucket: "pitch-party-86d2e.firebasestorage.app",
+    messagingSenderId: "1066611379387",
+    appId: "1:1066611379387:web:aefb55fe0c931e5870ad9e"
+  };
+
+  const app = initializeApp(firebaseConfig);
+  const db = getDatabase(app);
+
+  const DEVICE_ID_KEY = 'pitchparty_device_id';
+  function getDeviceId() {
+    let id = localStorage.getItem(DEVICE_ID_KEY);
+    if (!id) {
+      id = 'dev_' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+      localStorage.setItem(DEVICE_ID_KEY, id);
+    }
+    return id;
+  }
+  const DEVICE_ID = getDeviceId();
+
+  let lastIdx = -1;
+
+  window.castVote = async function(choice) {
+    const snap = await get(ref(db,'tournament'));
+    const s = snap.val();
+    if (!s || !s.votingOpen) return;
+    const idx = s.currentMatchupIndex;
+    const vRef = ref(db, `votes/${idx}/${DEVICE_ID}`);
+    const ex = await get(vRef);
+    if (ex.exists()) return;
+    await set(vRef, choice);
+    const field = choice==='a' ? 'aVotes' : 'bVotes';
+    await runTransaction(ref(db,`tournament/matchups/${idx}/${field}`), v => (v||0)+1);
+  };
+
+  function render(s) {
+    const el = document.getElementById('content');
+
+    if (!s || !s.tournamentStarted) {
+      el.innerHTML = waiting('Stand by…', 'Waiting for the host to begin');
+      return;
+    }
+    if (s.tournamentComplete) {
+      const alive = (s.competitors||[]).filter(c=>!c.eliminated);
+      const champ = alive.length===1?alive[0].name:'Check the main screen';
+      el.innerHTML = `<div class="message"><div class="trophy">🏆</div><h2>We have a winner!</h2><p class="champ">${champ}</p><p class="sub">Thanks for voting!</p></div>`;
+      return;
+    }
+
+    const idx = s.currentMatchupIndex;
+    const m = (s.matchups||[])[idx];
+    if (!m) { el.innerHTML = waiting('Stand by…', 'Loading next matchup…'); return; }
+
+    if (m.winner) {
+      el.innerHTML = `<div class="message"><div class="check">✓</div><h2>Round closed</h2><p class="champ">${m.winner}</p><p class="sub">advances to the next round</p><p class="next-up">Next matchup coming up…</p></div>`;
+      return;
+    }
+
+    if (!s.votingOpen) {
+      // Show what's coming
+      el.innerHTML = `<div class="message"><div class="upcoming-label">Up next</div><div class="upcoming-vs">
+        <div class="upcoming-name">${m.a}</div>
+        <div class="upcoming-divider">vs</div>
+        <div class="upcoming-name">${m.b}</div>
+      </div><p class="sub">Waiting for host to open voting…</p></div>`;
+      return;
+    }
+
+    const secs = s.timerSeconds!==undefined ? s.timerSeconds : 30;
+    // Check device vote
+    get(ref(db,`votes/${idx}/${DEVICE_ID}`)).then(snap => {
+      const myVote = snap.val();
+      const voted = !!myVote;
+      const aV=m.aVotes||0, bV=m.bVotes||0, tot=aV+bV;
+      const aPct=tot?Math.round(aV/tot*100):50, bPct=tot?Math.round(bV/tot*100):50;
+
+      el.innerHTML = `
+        <div class="voting-ui">
+          <div class="round-tag">${m.round}</div>
+          <div class="countdown ${secs<=10?'urgent':''}">${secs}</div>
+          <div class="choices">
+            <button class="choice-btn ${voted?(myVote==='a'?'chosen':'unchosen'):''}"
+              onclick="castVote('a')" ${voted?'disabled':''}>
+              <span class="choice-name">${m.a}</span>
+              ${voted?`<div class="result-bar-wrap"><div class="result-bar" style="width:${aPct}%"></div></div><span class="result-pct">${aPct}%</span>`:''}
+            </button>
+            <div class="vs-divider">vs</div>
+            <button class="choice-btn ${voted?(myVote==='b'?'chosen':'unchosen'):''}"
+              onclick="castVote('b')" ${voted?'disabled':''}>
+              <span class="choice-name">${m.b}</span>
+              ${voted?`<div class="result-bar-wrap"><div class="result-bar" style="width:${bPct}%"></div></div><span class="result-pct">${bPct}%</span>`:''}
+            </button>
+          </div>
+          ${voted?`<div class="voted-msg">Vote recorded ✓ — ${tot} vote${tot!==1?'s':''} cast</div>`:'<div class="tap-prompt">Tap to vote</div>'}
+        </div>`;
+    });
+  }
+
+  function waiting(title, sub) {
+    return `<div class="message"><div class="dot-pulse"><span></span><span></span><span></span></div><h2>${title}</h2><p class="sub">${sub}</p></div>`;
+  }
+
+  // Subscribe
+  onValue(ref(db,'tournament'), snap => {
+    const s = snap.val();
+    render(s);
+  });
+</script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;900&family=IBM+Plex+Mono:wght@400;700&family=IBM+Plex+Sans:wght@400;600&display=swap');
+  :root{--ink:#1a1208;--paper:#f5f0e8;--accent:#c8392b;--gold:#d4a017;--muted:#6b5f4a;}
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{font-family:'IBM Plex Sans',sans-serif;background:var(--paper);color:var(--ink);min-height:100vh;display:flex;flex-direction:column;}
+
+  /* MASTHEAD */
+  .masthead{border-bottom:3px double var(--ink);padding:14px 20px 10px;text-align:center;}
+  .masthead-eyebrow{font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:3px;text-transform:uppercase;color:var(--muted);margin-bottom:3px;}
+  .masthead h1{font-family:'Playfair Display',serif;font-size:32px;font-weight:900;line-height:1;letter-spacing:-1px;}
+  .masthead h1 span{color:var(--accent);}
+  .masthead-sub{font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:2px;text-transform:uppercase;color:var(--muted);margin-top:5px;border-top:1px solid var(--ink);padding-top:5px;}
+
+  /* MAIN */
+  #content{flex:1;display:flex;align-items:center;justify-content:center;padding:20px;}
+
+  /* WAITING/MESSAGE */
+  .message{text-align:center;max-width:340px;}
+  .message h2{font-family:'Playfair Display',serif;font-size:26px;font-weight:700;margin-bottom:10px;}
+  .sub{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--muted);letter-spacing:1px;margin-top:6px;}
+  .champ{font-family:'Playfair Display',serif;font-size:22px;font-weight:700;color:var(--accent);margin:10px 0;}
+  .next-up{font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--muted);margin-top:16px;}
+  .trophy{font-size:48px;margin-bottom:12px;}
+  .check{font-size:48px;color:#2e7d32;margin-bottom:12px;}
+
+  /* DOT PULSE */
+  .dot-pulse{display:flex;justify-content:center;gap:8px;margin-bottom:16px;}
+  .dot-pulse span{width:10px;height:10px;background:var(--muted);border-radius:50%;animation:dp 1.2s infinite ease-in-out;}
+  .dot-pulse span:nth-child(2){animation-delay:.2s;}
+  .dot-pulse span:nth-child(3){animation-delay:.4s;}
+  @keyframes dp{0%,80%,100%{transform:scale(0);opacity:.3}40%{transform:scale(1);opacity:1}}
+
+  /* UPCOMING */
+  .upcoming-label{font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:3px;text-transform:uppercase;color:var(--muted);margin-bottom:16px;}
+  .upcoming-vs{display:flex;flex-direction:column;align-items:center;gap:8px;margin-bottom:16px;}
+  .upcoming-name{font-family:'Playfair Display',serif;font-size:20px;font-weight:700;text-align:center;max-width:280px;}
+  .upcoming-divider{font-family:'Playfair Display',serif;font-size:16px;font-weight:900;color:var(--muted);}
+
+  /* VOTING UI */
+  .voting-ui{width:100%;max-width:360px;}
+  .round-tag{font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:3px;text-transform:uppercase;color:var(--muted);text-align:center;margin-bottom:8px;}
+  .countdown{font-family:'IBM Plex Mono',monospace;font-size:56px;font-weight:700;text-align:center;line-height:1;margin-bottom:16px;color:var(--ink);transition:color .3s;}
+  .countdown.urgent{color:var(--accent);animation:pulse .5s infinite alternate;}
+  @keyframes pulse{from{opacity:1}to{opacity:.5}}
+
+  .choices{display:flex;flex-direction:column;gap:0;}
+  .choice-btn{width:100%;border:2px solid var(--ink);background:white;padding:18px 16px;font-family:'Playfair Display',serif;font-size:20px;font-weight:700;cursor:pointer;text-align:center;transition:all .15s;line-height:1.3;display:flex;flex-direction:column;align-items:center;gap:8px;margin-bottom:10px;}
+  .choice-btn:hover:not(:disabled){background:var(--ink);color:var(--paper);}
+  .choice-btn.chosen{background:var(--ink);color:var(--paper);border-color:var(--ink);}
+  .choice-btn.unchosen{opacity:.45;cursor:default;}
+  .choice-name{display:block;}
+
+  .result-bar-wrap{width:100%;height:8px;background:rgba(255,255,255,.2);border-radius:0;}
+  .choice-btn.chosen .result-bar-wrap{background:rgba(255,255,255,.2);}
+  .choice-btn:not(.chosen) .result-bar-wrap{background:#eee;}
+  .result-bar{height:100%;background:var(--accent);transition:width .5s ease;}
+  .choice-btn.chosen .result-bar{background:var(--gold);}
+  .result-pct{font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:700;}
+
+  .vs-divider{font-family:'Playfair Display',serif;font-size:16px;font-weight:900;color:var(--muted);text-align:center;margin-bottom:10px;}
+  .voted-msg{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--muted);text-align:center;padding:10px;border:1px dashed var(--muted);margin-top:4px;}
+  .tap-prompt{font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--muted);text-align:center;letter-spacing:2px;text-transform:uppercase;margin-top:8px;}
+</style>
+</head>
+<body>
+<div class="masthead">
+  <div class="masthead-eyebrow">Lafayette's Independent News Source</div>
+  <h1>The <span>Current</span></h1>
+  <div class="masthead-sub">Pitch Party — Your Vote</div>
+</div>
+<div id="content">
+  <div class="message">
+    <div class="dot-pulse"><span></span><span></span><span></span></div>
+    <h2>Connecting…</h2>
+    <p class="sub">Please wait</p>
+  </div>
+</div>
+</body>
+</html>
