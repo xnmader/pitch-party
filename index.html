@@ -22,31 +22,20 @@
   const app = initializeApp(firebaseConfig);
   const db = getDatabase(app);
 
-  const DEFAULT_PITCHES = [
-    "The Bridge Ministry",
-    "The Mouton Land Question",
-    "LPSS Satellite Bus Stops",
-    "E-bikes and Scooters",
-    "Cy, Age 5: Trucks",
-    "I-49 'Go West at Carencro'",
-    "Noise Pollution",
-    "Downtown Grocery Desert",
-    "Recycling Scam?",
-    "North Lafayette Development",
-    "DEQ Chemtrail Reports",
-    "The Flag Runner",
-    "Short-Term Rental Enforcement",
-    "The Freeze",
-    "Right On Fashion",
-    "Bus Stop Shelter Gap",
-    "Palantir & Flock Cameras",
-    "Road Striping"
+  let setupPitches = [
+    "The Bridge Ministry","The Mouton Land Question","LPSS Satellite Bus Stops",
+    "E-bikes and Scooters","Cy, Age 5: Trucks","I-49 'Go West at Carencro'",
+    "Noise Pollution","Downtown Grocery Desert","Recycling Scam?",
+    "North Lafayette Development","DEQ Chemtrail Reports","The Flag Runner",
+    "Short-Term Rental Enforcement","The Freeze","Right On Fashion",
+    "Bus Stop Shelter Gap","Palantir & Flock Cameras","Road Striping"
   ];
 
   const VOTE_DURATION = 30;
   let timerInterval = null;
   let stateUnsub = null;
   let lastState = null;
+  let bracketVisible = false;
 
   // ── SCREENS ──
   function showScreen(id) {
@@ -58,16 +47,49 @@
   function renderSetup() {
     const grid = document.getElementById('pitch-grid');
     grid.innerHTML = '';
-    DEFAULT_PITCHES.forEach((p, i) => {
-      const card = document.createElement('div');
-      card.className = 'pitch-card';
-      card.innerHTML = `<div class="pitch-num">Pitch #${i+1}</div>
-        <input type="text" id="pi${i}" value="${p}"
-          style="font-family:'Playfair Display',serif;font-size:14px;font-weight:700;border:none;width:100%;outline:none;background:transparent;color:#1a1208;">`;
-      grid.appendChild(card);
-    });
+    setupPitches.forEach((p, i) => addPitchCard(p, i));
+    document.getElementById('setup-deck').textContent =
+      `${setupPitches.length} pitches loaded — edit titles if needed, then randomize and begin`;
   }
 
+  function addPitchCard(name, i) {
+    const grid = document.getElementById('pitch-grid');
+    const card = document.createElement('div');
+    card.className = 'pitch-card';
+    card.id = `card-${i}`;
+    card.innerHTML = `
+      <div class="pitch-num">Pitch #${i+1}</div>
+      <div style="display:flex;gap:6px;align-items:center;">
+        <input type="text" id="pi${i}" value="${name}"
+          style="font-family:'Playfair Display',serif;font-size:14px;font-weight:700;border:none;flex:1;outline:none;background:transparent;color:#1a1208;"
+          onchange="setupPitches[${i}]=this.value">
+        <button onclick="removePitch(${i})" style="border:none;background:none;cursor:pointer;color:#bbb;font-size:16px;padding:0 2px;" title="Remove">×</button>
+      </div>`;
+    grid.appendChild(card);
+  }
+
+  window.removePitch = function(i) {
+    setupPitches.splice(i, 1);
+    renderSetup();
+  };
+
+  window.addPitch = function() {
+    const input = document.getElementById('new-pitch-input');
+    const name = input.value.trim();
+    if (!name) return;
+    setupPitches.push(name);
+    input.value = '';
+    renderSetup();
+    // scroll to bottom of grid
+    const grid = document.getElementById('pitch-grid');
+    grid.lastChild && grid.lastChild.scrollIntoView({ behavior: 'smooth' });
+  };
+
+  window.addPitchOnEnter = function(e) {
+    if (e.key === 'Enter') window.addPitch();
+  };
+
+  // ── SHUFFLE ──
   function shuffle(arr) {
     const a = [...arr];
     for (let i = a.length-1; i > 0; i--) {
@@ -77,11 +99,16 @@
     return a;
   }
 
+  // ── START TOURNAMENT ──
   window.startTournament = async function() {
-    const pitches = DEFAULT_PITCHES.map((p,i) => {
+    // Collect any edited pitch names
+    const pitches = setupPitches.map((p,i) => {
       const el = document.getElementById(`pi${i}`);
       return el ? (el.value.trim()||p) : p;
-    });
+    }).filter(p => p.trim());
+
+    if (pitches.length < 2) { alert('Need at least 2 pitches.'); return; }
+
     const shuffled = shuffle(pitches);
     const competitors = shuffled.map(name => ({ name, wins:0, losses:0, eliminated:false }));
     const matchups = makeWinnersMatchups(competitors, 1);
@@ -97,21 +124,18 @@
     });
     await set(ref(db,'votes'), null);
     showScreen('host-screen');
+    bracketVisible = false;
     subscribeState();
     updateVoterURL();
   };
 
+  // ── MATCHUP BUILDERS ──
   function makeWinnersMatchups(competitors, round) {
     const alive = competitors.filter(c => !c.eliminated && c.losses===0);
     const out = [];
-    for (let i=0; i+1<alive.length; i+=2) {
+    for (let i=0; i+1<alive.length; i+=2)
       out.push({ a:alive[i].name, b:alive[i+1].name,
-        winner:null, aVotes:0, bVotes:0,
-        round:`Round ${round}`, bracket:'winners', tiebreak:false });
-    }
-    if (alive.length%2!==0) {
-      // Bye — give the odd one out a win automatically, no matchup needed
-    }
+        winner:null, aVotes:0, bVotes:0, round:`Round ${round}`, bracket:'winners', tiebreak:false });
     return out;
   }
 
@@ -120,10 +144,9 @@
     const lAlive = competitors.filter(c => !c.eliminated && c.losses===1);
     const allAlive = competitors.filter(c => !c.eliminated);
     if (allAlive.length<=1) return [];
-    if (wAlive.length===1 && lAlive.length===1) {
+    if (wAlive.length===1 && lAlive.length===1)
       return [{ a:wAlive[0].name, b:lAlive[0].name,
         winner:null, aVotes:0, bVotes:0, round:'Grand Final', bracket:'final', tiebreak:false }];
-    }
     const out = [];
     for (let i=0; i+1<wAlive.length; i+=2)
       out.push({ a:wAlive[i].name, b:wAlive[i+1].name,
@@ -141,9 +164,25 @@
       const s = snap.val();
       if (!s) return;
       lastState = s;
-      renderHost(s);
+      if (bracketVisible) drawBracket(s);
+      else renderHost(s);
     });
   }
+
+  // ── BRACKET TOGGLE ──
+  window.showBracket = function() {
+    bracketVisible = true;
+    document.getElementById('controls-view').style.display = 'none';
+    document.getElementById('bracket-view').style.display = 'block';
+    if (lastState) drawBracket(lastState);
+  };
+
+  window.showControls = function() {
+    bracketVisible = false;
+    document.getElementById('bracket-view').style.display = 'none';
+    document.getElementById('controls-view').style.display = 'block';
+    if (lastState) renderHost(lastState);
+  };
 
   // ── HOST CONTROLS ──
   window.startMatchup = async function() {
@@ -166,7 +205,8 @@
   };
 
   async function closeMatchup() {
-    document.getElementById('end-early-btn').style.display='none';
+    const eb = document.getElementById('end-early-btn');
+    if (eb) eb.style.display='none';
     const snap = await get(ref(db,'tournament'));
     const s = snap.val();
     if (!s) return;
@@ -215,7 +255,7 @@
     renderSetup();
   };
 
-  // ── RENDER HOST ──
+  // ── RENDER HOST CONTROLS ──
   function renderHost(s) {
     if (s.tournamentComplete) { renderResults(s); return; }
     const idx = s.currentMatchupIndex;
@@ -232,238 +272,269 @@
     document.getElementById('comp-b-votes').textContent = bV;
     document.getElementById('vote-total').textContent = `${tot} vote${tot!==1?'s':''} cast`+(m.tiebreak?' — tiebreak':'');
 
-    // Live vote bars
-    const aPct = tot ? Math.round(aV/tot*100) : 50;
-    const bPct = tot ? Math.round(bV/tot*100) : 50;
-    document.getElementById('bar-a').style.width = aPct+'%';
-    document.getElementById('bar-b').style.width = bPct+'%';
-    document.getElementById('pct-a').textContent = tot ? aPct+'%' : '';
-    document.getElementById('pct-b').textContent = tot ? bPct+'%' : '';
+    const aPct=tot?Math.round(aV/tot*100):50, bPct=tot?Math.round(bV/tot*100):50;
+    document.getElementById('bar-a').style.width=aPct+'%';
+    document.getElementById('bar-b').style.width=bPct+'%';
+    document.getElementById('pct-a').textContent=tot?aPct+'%':'';
+    document.getElementById('pct-b').textContent=tot?bPct+'%':'';
+    document.getElementById('comp-a').classList.toggle('leading',aV>bV);
+    document.getElementById('comp-b').classList.toggle('leading',bV>aV);
 
-    document.getElementById('comp-a').classList.toggle('leading', aV>bV);
-    document.getElementById('comp-b').classList.toggle('leading', bV>aV);
-
-    const secs = s.timerSeconds!==undefined ? s.timerSeconds : VOTE_DURATION;
-    const tEl = document.getElementById('host-timer');
-    tEl.textContent = secs;
-    tEl.classList.toggle('urgent', secs<=10);
-    const bar = document.getElementById('timer-bar');
-    if (bar) bar.style.width = Math.max(0,secs/VOTE_DURATION*100)+'%';
+    const secs=s.timerSeconds!==undefined?s.timerSeconds:VOTE_DURATION;
+    const tEl=document.getElementById('host-timer');
+    tEl.textContent=secs;
+    tEl.classList.toggle('urgent',secs<=10);
+    const bar=document.getElementById('timer-bar');
+    if (bar) bar.style.width=Math.max(0,secs/VOTE_DURATION*100)+'%';
 
     const sb=document.getElementById('start-btn');
     const nb=document.getElementById('next-btn');
     const eb=document.getElementById('end-early-btn');
     if (m.winner) {
       sb.style.display='none'; nb.style.display='inline-block'; eb.style.display='none';
+      const rl=document.getElementById('matchup-result');
+      rl.textContent=`✓ ${m.winner} advances${m.tiebreak?' (tiebreak)':''}`;
+      rl.style.display='block';
     } else if (s.votingOpen) {
       sb.style.display='none'; nb.style.display='none'; eb.style.display='inline-block';
+      document.getElementById('matchup-result').style.display='none';
     } else {
       sb.style.display='inline-block'; nb.style.display='none'; eb.style.display='none';
-    }
-
-    if (m.winner) {
-      const resultLabel = document.getElementById('matchup-result');
-      resultLabel.textContent = `✓ ${m.winner} advances${m.tiebreak?' (tiebreak)':''}`;
-      resultLabel.style.display='block';
-    } else {
       document.getElementById('matchup-result').style.display='none';
     }
 
     renderField(s.competitors||[]);
-    renderBracketTree(s.matchups||[], s.competitors||[], idx);
   }
 
   function renderField(competitors) {
     const el=document.getElementById('field-status');
     if (!el) return;
     el.innerHTML='';
-    competitors.forEach(c => {
+    competitors.forEach(c=>{
       const p=document.createElement('span');
-      p.textContent = c.eliminated?c.name:c.losses===1?`⚠ ${c.name}`:`✓ ${c.name}`;
-      p.className = c.eliminated?'elim-pill':c.losses===1?'loss1-pill':'alive-pill';
+      p.textContent=c.eliminated?c.name:c.losses===1?`⚠ ${c.name}`:`✓ ${c.name}`;
+      p.className=c.eliminated?'elim-pill':c.losses===1?'loss1-pill':'alive-pill';
       el.appendChild(p);
     });
   }
 
-  // ── BRACKET TREE ──
-  function renderBracketTree(matchups, competitors, currentIdx) {
+  // ── NCAA BRACKET DRAWING ──
+  function drawBracket(s) {
     const canvas = document.getElementById('bracket-canvas');
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
 
+    const matchups = s.matchups || [];
+    const currentIdx = s.currentMatchupIndex || 0;
+
     const winners = matchups.filter(m=>m.bracket==='winners');
     const losers  = matchups.filter(m=>m.bracket==='losers');
     const finals  = matchups.filter(m=>m.bracket==='final');
+
     const wRounds = groupByRound(winners);
     const lRounds = groupByRound(losers);
+    const wKeys = Object.keys(wRounds);
+    const lKeys = Object.keys(lRounds);
 
-    const BOX_W = 140, BOX_H = 38, GAP_Y = 12, ROUND_W = 170, PAD = 20;
-    const INK = '#1a1208', ACCENT = '#c8392b', GOLD = '#d4a017';
-    const GREEN = '#2e7d32', MUTED = '#6b5f4a';
+    // Layout constants
+    const BOX_W = 150, BOX_H = 28, ENTRY_H = BOX_H, GAP_Y = 8;
+    const ROUND_GAP = 40, PAD_LEFT = 20, PAD_TOP = 40, PAD_BOT = 20;
 
-    // Calculate required canvas dimensions
-    const wRoundCount = Object.keys(wRounds).length;
-    const lRoundCount = Object.keys(lRounds).length;
-    const totalRounds = Math.max(wRoundCount, lRoundCount) + (finals.length ? 1 : 0);
+    const INK='#1a1208', ACCENT='#c8392b', GOLD='#d4a017', GREEN='#2e7d32', MUTED='#6b5f4a';
+    const PAPER='#f5f0e8';
 
-    // Max boxes per half
-    const maxWBoxes = Math.max(...Object.values(wRounds).map(ms=>ms.length), 1);
-    const maxLBoxes = Math.max(...Object.values(lRounds).map(ms=>ms.length), 1);
+    // Count max rounds
+    const totalRoundCols = Math.max(wKeys.length, lKeys.length) + (finals.length?1:0);
 
-    const halfH = Math.max(maxWBoxes, 1) * (BOX_H*2+2+GAP_Y) + 60;
-    const H = halfH * 2;
-    const W = Math.max(totalRounds * ROUND_W + PAD*2 + BOX_W, 600);
+    // Compute canvas size
+    const maxWPerRound = wKeys.length ? Math.max(...wKeys.map(k=>wRounds[k].length)) : 1;
+    const maxLPerRound = lKeys.length ? Math.max(...lKeys.map(k=>lRounds[k].length)) : 0;
+
+    const halfH_W = maxWPerRound * (ENTRY_H*2 + GAP_Y) + PAD_TOP + PAD_BOT;
+    const halfH_L = maxLPerRound > 0 ? maxLPerRound * (ENTRY_H*2 + GAP_Y) + PAD_TOP + PAD_BOT : 0;
+    const H = Math.max(halfH_W + halfH_L, 200);
+    const W = totalRoundCols * (BOX_W + ROUND_GAP) + PAD_LEFT * 2;
 
     canvas.width = W;
     canvas.height = H;
-    canvas.style.width = W + 'px';
-    canvas.style.height = H + 'px';
+    canvas.style.width = W+'px';
+    canvas.style.height = H+'px';
 
     ctx.fillStyle = '#faf7f0';
     ctx.fillRect(0,0,W,H);
 
-    // Section labels
-    ctx.font = 'bold 10px IBM Plex Mono, monospace';
-    ctx.fillStyle = MUTED;
-    ctx.fillText('WINNERS BRACKET', PAD, 16);
-    ctx.fillText('LOSERS BRACKET', PAD, halfH + 16);
-
-    // Dividing line
-    ctx.strokeStyle = '#ddd';
-    ctx.setLineDash([4,4]);
-    ctx.beginPath(); ctx.moveTo(0,halfH); ctx.lineTo(W,halfH); ctx.stroke();
-    ctx.setLineDash([]);
-
-    function drawBox(m, x, y, isCur, mIdx) {
-      const done = !!m.winner;
-      ctx.fillStyle = isCur ? '#fff8e1' : 'white';
-      ctx.fillRect(x, y, BOX_W, BOX_H*2+2);
-      ctx.strokeStyle = isCur ? GOLD : (done ? '#ccc' : INK);
-      ctx.lineWidth = isCur ? 2.5 : 1;
-      ctx.strokeRect(x, y, BOX_W, BOX_H*2+2);
-      // divider
-      ctx.strokeStyle = isCur ? GOLD : '#eee';
+    // Section divider
+    if (halfH_L > 0) {
+      ctx.strokeStyle = '#e0d8cc';
+      ctx.setLineDash([6,4]);
       ctx.lineWidth = 1;
-      ctx.beginPath(); ctx.moveTo(x, y+BOX_H+1); ctx.lineTo(x+BOX_W, y+BOX_H+1); ctx.stroke();
-
-      [m.a, m.b].forEach((name, ri) => {
-        const ty = y + ri*(BOX_H+2) + BOX_H*0.62;
-        const isW = m.winner===name, isL = m.winner && !isW;
-        ctx.fillStyle = isW ? GREEN : isL ? '#bbb' : INK;
-        ctx.font = isW ? 'bold 11px IBM Plex Sans,sans-serif' : '11px IBM Plex Sans,sans-serif';
-        ctx.fillText(trunc(name,17)+(isW?' ✓':''), x+6, ty);
-        if (done) {
-          const tot=(m.aVotes||0)+(m.bVotes||0);
-          const v=ri===0?m.aVotes||0:m.bVotes||0;
-          const pct=tot?v/tot:0;
-          ctx.fillStyle=isW?'#c8f7c5':isL?'#fde8e8':'#eee';
-          ctx.fillRect(x+1, y+ri*(BOX_H+2)+BOX_H-7, Math.max(0,(BOX_W-2)*pct), 5);
-        }
-      });
+      ctx.beginPath(); ctx.moveTo(0,halfH_W); ctx.lineTo(W,halfH_W); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.font = 'bold 9px IBM Plex Mono,monospace';
+      ctx.fillStyle = MUTED;
+      ctx.fillText('WINNERS BRACKET', PAD_LEFT, 14);
+      ctx.fillText('LOSERS BRACKET', PAD_LEFT, halfH_W+14);
     }
 
-    function drawConnector(x1, y1, x2, y2) {
-      ctx.strokeStyle = '#ccc';
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(x1, y1);
-      const mx = x1 + (x2-x1)/2;
-      ctx.lineTo(mx, y1);
-      ctx.lineTo(mx, y2);
-      ctx.lineTo(x2, y2);
-      ctx.stroke();
+    // Store box centers for connector lines: { mIdx: {x1,x2,cy} }
+    const boxMeta = {};
+
+    function drawEntry(name, x, y, w, isWin, isLose, isCurr) {
+      ctx.fillStyle = isWin ? '#e8f5e9' : isLose ? '#fdecea' : isCurr ? '#fff8e1' : 'white';
+      ctx.fillRect(x, y, w, ENTRY_H);
+      ctx.strokeStyle = isCurr ? GOLD : isWin ? '#a5d6a7' : isLose ? '#ef9a9a' : '#ccc';
+      ctx.lineWidth = isCurr ? 2 : 1;
+      ctx.strokeRect(x, y, w, ENTRY_H);
+      ctx.font = isWin ? `bold 11px IBM Plex Sans,sans-serif` : `11px IBM Plex Sans,sans-serif`;
+      ctx.fillStyle = isWin ? GREEN : isLose ? '#bbb' : INK;
+      ctx.fillText(trunc(name, 19)+(isWin?' ✓':''), x+6, y+ENTRY_H*0.68);
     }
 
-    // Draw a bracket half and return box center positions keyed by matchup index
-    function drawHalf(rounds, topY, halfHeight) {
-      const positions = {}; // mIdx -> center {x, cy}
-      let x = PAD;
-      const roundKeys = Object.keys(rounds);
-      roundKeys.forEach((rn, ri) => {
-        const ms = rounds[rn];
-        ctx.font = 'bold 9px IBM Plex Mono,monospace';
-        ctx.fillStyle = MUTED;
-        ctx.fillText(rn, x, topY+4);
-        const totalH = ms.length*(BOX_H*2+2+GAP_Y)-GAP_Y;
-        const startY = topY + 10 + (halfHeight-30-totalH)/2;
-        ms.forEach((m, i) => {
-          const mIdx = matchups.indexOf(m);
-          const isCur = mIdx===currentIdx;
-          const y = startY + i*(BOX_H*2+2+GAP_Y);
-          drawBox(m, x, y, isCur, mIdx);
-          positions[mIdx] = { x, y, cx: x+BOX_W, cy: y+(BOX_H+1) };
-        });
-        x += ROUND_W;
-      });
+    function drawMatchBox(m, x, y, isCurr) {
+      const doneA = !!m.winner, isWinA = m.winner===m.a, isWinB = m.winner===m.b;
+      drawEntry(m.a, x, y,             BOX_W, isWinA, doneA&&!isWinA, isCurr);
+      drawEntry(m.b, x, y+ENTRY_H+1,  BOX_W, isWinB, doneA&&!isWinB, isCurr);
+      return { left: x, right: x+BOX_W, top: y, mid: y+ENTRY_H+0.5, bot: y+ENTRY_H*2+1 };
+    }
 
-      // Draw connectors between consecutive rounds
-      for (let ri=0; ri<roundKeys.length-1; ri++) {
-        const thisMs = rounds[roundKeys[ri]];
-        const nextMs = rounds[roundKeys[ri+1]];
-        thisMs.forEach((m, i) => {
-          const mIdx = matchups.indexOf(m);
-          const pos = positions[mIdx];
-          if (!pos) return;
-          const nextIdx2 = matchups.indexOf(nextMs[Math.floor(i/2)]);
-          const npos = positions[nextIdx2];
-          if (!npos) return;
-          const targetY = npos.y + (i%2===0 ? BOX_H*0.5 : BOX_H*1.5+2);
-          drawConnector(pos.cx, pos.cy, npos.x, targetY);
-        });
-      }
+    function layoutRound(rounds, keys, ri, topY, halfHeight) {
+      const ms = rounds[keys[ri]];
+      const x = PAD_LEFT + ri*(BOX_W+ROUND_GAP);
+      const totalH = ms.length*(ENTRY_H*2+1+GAP_Y)-GAP_Y;
+      const startY = topY + PAD_TOP + (halfHeight - PAD_TOP - PAD_BOT - totalH)/2;
+      const positions = [];
+      ms.forEach((m, i) => {
+        const mIdx = matchups.indexOf(m);
+        const isCurr = mIdx===currentIdx;
+        const y = startY + i*(ENTRY_H*2+1+GAP_Y);
+        const meta = drawMatchBox(m, x, y, isCurr);
+        boxMeta[mIdx] = meta;
+        positions.push({ m, mIdx, meta, i });
+      });
       return positions;
     }
 
-    const wPositions = drawHalf(wRounds, 20, halfH);
-    const lPositions = drawHalf(lRounds, halfH+20, halfH);
+    // Draw connector lines between rounds
+    function connectRounds(thisPositions, nextPositions) {
+      ctx.strokeStyle = '#ccc';
+      ctx.lineWidth = 1;
+      thisPositions.forEach(({meta, i}) => {
+        const nextPos = nextPositions[Math.floor(i/2)];
+        if (!nextPos) return;
+        const x1 = meta.right;
+        const y1 = meta.mid;
+        const x2 = nextPos.meta.left;
+        const y2 = i%2===0 ? nextPos.meta.top+ENTRY_H*0.5 : nextPos.meta.mid+ENTRY_H*0.5;
+        const mx = x1 + (x2-x1)/2;
+        ctx.beginPath();
+        ctx.moveTo(x1,y1); ctx.lineTo(mx,y1); ctx.lineTo(mx,y2); ctx.lineTo(x2,y2);
+        ctx.stroke();
+      });
+    }
 
-    // Grand final
+    // Draw round labels
+    function drawRoundLabel(label, ri, y) {
+      const x = PAD_LEFT + ri*(BOX_W+ROUND_GAP);
+      ctx.font = 'bold 9px IBM Plex Mono,monospace';
+      ctx.fillStyle = MUTED;
+      ctx.fillText(label, x, y);
+    }
+
+    // ── WINNERS BRACKET ──
+    const wTopY = halfH_L > 0 ? 0 : 0;
+    const wPositionsByRound = [];
+    wKeys.forEach((k, ri) => {
+      drawRoundLabel(k, ri, wTopY+PAD_TOP-6);
+      const pos = layoutRound(wRounds, wKeys, ri, wTopY, halfH_W);
+      wPositionsByRound.push(pos);
+    });
+    for (let ri=0; ri<wPositionsByRound.length-1; ri++) {
+      connectRounds(wPositionsByRound[ri], wPositionsByRound[ri+1]);
+    }
+
+    // ── LOSERS BRACKET ──
+    const lTopY = halfH_W;
+    const lPositionsByRound = [];
+    lKeys.forEach((k, ri) => {
+      drawRoundLabel(k, ri, lTopY+PAD_TOP-6);
+      const pos = layoutRound(lRounds, lKeys, ri, lTopY, halfH_L);
+      lPositionsByRound.push(pos);
+    });
+    for (let ri=0; ri<lPositionsByRound.length-1; ri++) {
+      connectRounds(lPositionsByRound[ri], lPositionsByRound[ri+1]);
+    }
+
+    // ── GRAND FINAL ──
     finals.forEach(m => {
       const mIdx = matchups.indexOf(m);
-      const isCur = mIdx===currentIdx;
-      const x = W-BOX_W-PAD;
-      const y = H/2-(BOX_H+1);
-      ctx.font = 'bold 10px IBM Plex Mono,monospace';
-      ctx.fillStyle = ACCENT;
-      ctx.fillText('GRAND FINAL', x, y-6);
-      drawBox(m, x, y, isCur, mIdx);
+      const isCurr = mIdx===currentIdx;
+      const ri = Math.max(wKeys.length, lKeys.length);
+      const x = PAD_LEFT + ri*(BOX_W+ROUND_GAP);
+      const y = H/2 - ENTRY_H - 0.5;
+      drawRoundLabel('GRAND FINAL', ri, y-8);
+      ctx.font = ''; // reset
+      const meta = drawMatchBox(m, x, y, isCurr);
+      boxMeta[mIdx] = meta;
 
       // Connect from last winners round
-      const wKeys = Object.keys(wRounds);
-      if (wKeys.length) {
-        const lastW = wRounds[wKeys[wKeys.length-1]];
-        const wIdx = matchups.indexOf(lastW[0]);
-        const wp = wPositions[wIdx];
-        if (wp) drawConnector(wp.cx, wp.cy, x, y+BOX_H*0.5);
+      if (wPositionsByRound.length) {
+        const lastW = wPositionsByRound[wPositionsByRound.length-1];
+        if (lastW[0]) {
+          const lm = lastW[0].meta;
+          const mx = lm.right + (x-lm.right)/2;
+          ctx.strokeStyle='#ccc'; ctx.lineWidth=1;
+          ctx.beginPath(); ctx.moveTo(lm.right,lm.mid); ctx.lineTo(mx,lm.mid);
+          ctx.lineTo(mx,meta.top+ENTRY_H*0.5); ctx.lineTo(x,meta.top+ENTRY_H*0.5); ctx.stroke();
+        }
       }
       // Connect from last losers round
-      const lKeys = Object.keys(lRounds);
-      if (lKeys.length) {
-        const lastL = lRounds[lKeys[lKeys.length-1]];
-        const lIdx = matchups.indexOf(lastL[0]);
-        const lp = lPositions[lIdx];
-        if (lp) drawConnector(lp.cx, lp.cy, x, y+BOX_H*1.5+2);
+      if (lPositionsByRound.length) {
+        const lastL = lPositionsByRound[lPositionsByRound.length-1];
+        if (lastL[0]) {
+          const lm = lastL[0].meta;
+          const mx = lm.right + (x-lm.right)/2;
+          ctx.strokeStyle='#ccc'; ctx.lineWidth=1;
+          ctx.beginPath(); ctx.moveTo(lm.right,lm.mid); ctx.lineTo(mx,lm.mid);
+          ctx.lineTo(mx,meta.mid+ENTRY_H*0.5); ctx.lineTo(x,meta.mid+ENTRY_H*0.5); ctx.stroke();
+        }
+      }
+
+      // Champion label
+      if (m.winner) {
+        ctx.font='bold 12px IBM Plex Mono,monospace';
+        ctx.fillStyle=ACCENT;
+        ctx.fillText('🏆 '+m.winner, x+BOX_W+12, meta.top+ENTRY_H);
       }
     });
+
+    // Highlight current matchup label
+    if (matchups[currentIdx]) {
+      const cm = matchups[currentIdx];
+      const meta = boxMeta[currentIdx];
+      if (meta) {
+        ctx.font='bold 9px IBM Plex Mono,monospace';
+        ctx.fillStyle=GOLD;
+        ctx.fillText('▶ NOW VOTING', meta.left, meta.top-4);
+      }
+    }
   }
 
   function groupByRound(matchups) {
-    const rounds = {};
-    matchups.forEach(m => { (rounds[m.round]||(rounds[m.round]=[])).push(m); });
-    return rounds;
+    const r={};
+    matchups.forEach(m=>{(r[m.round]||(r[m.round]=[])).push(m);});
+    return r;
   }
 
-  function trunc(s,n) { return s.length>n?s.slice(0,n)+'…':s; }
+  function trunc(s,n){return s.length>n?s.slice(0,n)+'…':s;}
 
   // ── RESULTS ──
   function renderResults(s) {
     showScreen('results-screen');
-    const el = document.getElementById('results-content');
-    const alive = (s.competitors||[]).filter(c=>!c.eliminated);
-    const champ = alive.length===1?alive[0]:
-      (s.competitors||[]).reduce((b,c)=>(!b||c.wins>b.wins)?c:b,null);
-    const sorted = [...(s.competitors||[])].sort((a,b)=>b.wins-a.wins||a.losses-b.losses);
-    el.innerHTML = `
+    const el=document.getElementById('results-content');
+    const alive=(s.competitors||[]).filter(c=>!c.eliminated);
+    const champ=alive.length===1?alive[0]:(s.competitors||[]).reduce((b,c)=>(!b||c.wins>b.wins)?c:b,null);
+    const sorted=[...(s.competitors||[])].sort((a,b)=>b.wins-a.wins||a.losses-b.losses);
+    el.innerHTML=`
       <div class="results-eyebrow">The People Have Spoken</div>
       <div class="winner-headline">The Current Will Report</div>
       <div class="winner-name">${champ?champ.name:'—'}</div>
@@ -471,47 +542,43 @@
         <thead><tr><th>#</th><th>Pitch</th><th>W</th><th>L</th><th>Status</th></tr></thead>
         <tbody>${sorted.map((c,i)=>`<tr${i===0?' class="top"':''}>
           <td>${i+1}</td><td>${c.name}</td><td>${c.wins}</td><td>${c.losses}</td>
-          <td>${c.eliminated?'❌':c.losses===1?'⚠ One loss':'✓'}</td></tr>`).join('')}
-        </tbody>
+          <td>${c.eliminated?'❌':c.losses===1?'⚠ One loss':'✓'}</td></tr>`).join('')}</tbody>
       </table>`;
   }
 
+  // ── VOTER URL + QR ──
   function updateVoterURL() {
-    const base = window.location.href.replace('index.html','').replace(/\/$/, '');
-    const url = base + '/vote.html';
-    const el = document.getElementById('voter-url');
-    if (el) el.textContent = url;
+    const base=window.location.href.replace('index.html','').replace(/\/$/,'');
+    const url=base+'/vote.html';
+    const el=document.getElementById('voter-url');
+    if (el) el.textContent=url;
     generateQR(url);
   }
 
   function generateQR(url) {
-    const container = document.getElementById('qr-container');
+    const container=document.getElementById('qr-container');
     if (!container) return;
-    container.innerHTML = '';
-    // Use QRCode.js from CDN
-    const script = document.createElement('script');
-    script.src = 'https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js';
-    script.onload = () => {
-      new QRCode(container, {
-        text: url,
-        width: 160,
-        height: 160,
-        colorDark: '#1a1208',
-        colorLight: '#f5f0e8',
-        correctLevel: QRCode.CorrectLevel.M
-      });
-    };
-    document.head.appendChild(script);
+    container.innerHTML='';
+    if (window.QRCode) {
+      new QRCode(container,{text:url,width:160,height:160,colorDark:'#1a1208',colorLight:'#f5f0e8',correctLevel:QRCode.CorrectLevel.M});
+    } else {
+      const script=document.createElement('script');
+      script.src='https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js';
+      script.onload=()=>{
+        new QRCode(container,{text:url,width:160,height:160,colorDark:'#1a1208',colorLight:'#f5f0e8',correctLevel:QRCode.CorrectLevel.M});
+      };
+      document.head.appendChild(script);
+    }
   }
 
   // ── INIT ──
-  get(ref(db,'tournament')).then(snap => {
-    const s = snap.val();
-    if (s && s.tournamentStarted && !s.tournamentComplete) {
+  get(ref(db,'tournament')).then(snap=>{
+    const s=snap.val();
+    if (s&&s.tournamentStarted&&!s.tournamentComplete) {
       showScreen('host-screen');
       subscribeState();
       updateVoterURL();
-    } else if (s && s.tournamentComplete) {
+    } else if (s&&s.tournamentComplete) {
       renderResults(s);
     } else {
       showScreen('setup-screen');
@@ -519,9 +586,8 @@
     }
   });
 
-  // Resize bracket canvas on window resize
-  window.addEventListener('resize', () => {
-    if (lastState) renderBracketTree(lastState.matchups||[], lastState.competitors||[], lastState.currentMatchupIndex||0);
+  window.addEventListener('resize',()=>{
+    if (lastState&&bracketVisible) drawBracket(lastState);
   });
 </script>
 <style>
@@ -545,26 +611,32 @@
   .btn.secondary:hover{background:var(--ink);color:var(--paper);}
   .btn.danger{background:var(--accent);border-color:var(--accent);}
   .btn.danger:hover{background:#a93226;border-color:#a93226;}
+  .btn.bracket-btn{background:var(--ink);color:var(--paper);font-size:11px;padding:8px 16px;}
   .btn-row{display:flex;gap:10px;flex-wrap:wrap;}
 
   /* SETUP */
-  .setup-body{max-width:900px;margin:0 auto;padding:28px 24px;}
+  .setup-body{max-width:960px;margin:0 auto;padding:28px 24px;}
   .setup-headline{font-family:'Playfair Display',serif;font-size:26px;font-weight:700;margin-bottom:6px;}
-  .setup-deck{font-size:13px;color:var(--muted);margin-bottom:28px;font-family:'IBM Plex Mono',monospace;}
-  .pitch-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px;margin-bottom:28px;}
+  .setup-deck{font-size:13px;color:var(--muted);margin-bottom:20px;font-family:'IBM Plex Mono',monospace;}
+  .pitch-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px;margin-bottom:20px;}
   .pitch-card{border:1px solid var(--ink);padding:10px 12px;background:white;}
   .pitch-num{font-family:'IBM Plex Mono',monospace;font-size:9px;color:var(--muted);margin-bottom:3px;letter-spacing:1px;}
+  .add-pitch-row{display:flex;gap:8px;margin-bottom:24px;align-items:stretch;}
+  .add-pitch-input{font-family:'Playfair Display',serif;font-size:14px;font-weight:700;border:2px solid var(--ink);padding:10px 14px;flex:1;outline:none;background:white;color:var(--ink);}
+  .add-pitch-input::placeholder{color:#ccc;font-weight:400;}
 
-  /* HOST LAYOUT */
-  .host-body{max-width:1400px;margin:0 auto;padding:16px 20px;}
-  .host-grid{display:grid;grid-template-columns:400px 1fr;gap:20px;align-items:start;}
+  /* HOST */
+  .host-toolbar{display:flex;align-items:center;gap:10px;padding:10px 20px;border-bottom:1px solid #ddd;background:var(--paper);}
+  .host-toolbar-title{font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:2px;text-transform:uppercase;color:var(--muted);flex:1;}
+
+  /* CONTROLS VIEW */
+  #controls-view{max-width:1200px;margin:0 auto;padding:16px 20px;}
+  .controls-grid{display:grid;grid-template-columns:380px 1fr;gap:20px;align-items:start;}
 
   /* MATCHUP CARD */
   .matchup-card{border:3px solid var(--ink);background:white;padding:20px;}
   .matchup-label{font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:3px;text-transform:uppercase;color:var(--muted);margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;}
   .round-badge{background:var(--ink);color:var(--paper);font-family:'IBM Plex Mono',monospace;font-size:9px;padding:3px 7px;letter-spacing:1px;}
-
-  /* TIMER */
   .timer-block{text-align:center;margin-bottom:16px;}
   .timer-display{font-family:'IBM Plex Mono',monospace;font-size:56px;font-weight:700;line-height:1;color:var(--ink);transition:color .3s;}
   .timer-display.urgent{color:var(--accent);animation:pulse .5s infinite alternate;}
@@ -572,39 +644,34 @@
   .timer-label{font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:3px;text-transform:uppercase;color:var(--muted);}
   .timer-bar-wrap{height:5px;background:#ddd;margin:10px 0 16px;}
   .timer-bar{height:100%;background:var(--accent);transition:width 1s linear;}
-
-  /* COMPETITORS */
   .versus-row{display:grid;grid-template-columns:1fr 36px 1fr;gap:8px;align-items:center;margin-bottom:12px;}
   .competitor{border:2px solid var(--ink);padding:12px;text-align:center;transition:background .3s;}
   .competitor.leading{background:#fff8e1;border-color:var(--gold);}
   .competitor-name{font-family:'Playfair Display',serif;font-size:14px;font-weight:700;line-height:1.3;margin-bottom:6px;}
   .competitor-votes{font-family:'IBM Plex Mono',monospace;font-size:24px;font-weight:700;color:var(--accent);}
-  .vote-bar-wrap{height:8px;background:#eee;margin-top:6px;border-radius:0;}
-  .vote-bar{height:100%;background:var(--accent);transition:width .4s ease;border-radius:0;}
+  .vote-bar-wrap{height:8px;background:#eee;margin-top:6px;}
+  .vote-bar{height:100%;background:var(--accent);transition:width .4s ease;}
   .competitor-pct{font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--muted);margin-top:3px;}
   .vs-label{font-family:'Playfair Display',serif;font-size:18px;font-weight:900;text-align:center;color:var(--muted);}
   .vote-total{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--muted);text-align:center;margin-bottom:12px;}
   .matchup-result{font-family:'IBM Plex Mono',monospace;font-size:11px;color:#2e7d32;text-align:center;margin-bottom:12px;display:none;padding:6px;background:#e8f5e9;}
   .host-controls{display:flex;gap:8px;flex-wrap:wrap;justify-content:center;}
 
-  /* JOIN PANEL */
-  .join-panel{border:1px solid #ccc;padding:14px;background:white;margin-top:14px;}
+  /* RIGHT COLUMN */
+  .right-col{display:flex;flex-direction:column;gap:14px;}
+  .join-panel{border:1px solid #ccc;padding:14px;background:white;}
   .join-headline{font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:2px;text-transform:uppercase;color:var(--muted);margin-bottom:8px;}
   .join-url{font-family:'IBM Plex Mono',monospace;font-size:11px;background:var(--ink);color:var(--paper);padding:7px 10px;word-break:break-all;}
-
-  /* FIELD STATUS */
-  .elim-section{margin-top:14px;}
-  .elim-title{font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:3px;text-transform:uppercase;color:var(--muted);margin-bottom:6px;}
+  .elim-section{border:1px solid #ccc;padding:14px;background:white;}
+  .elim-title{font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:3px;text-transform:uppercase;color:var(--muted);margin-bottom:8px;}
   .elim-pills{display:flex;flex-wrap:wrap;gap:5px;}
   .elim-pill{font-family:'IBM Plex Mono',monospace;font-size:8px;padding:2px 7px;background:#eee;color:#999;text-decoration:line-through;}
   .alive-pill{font-family:'IBM Plex Mono',monospace;font-size:8px;padding:2px 7px;background:#e8f5e9;color:#2e7d32;}
   .loss1-pill{font-family:'IBM Plex Mono',monospace;font-size:8px;padding:2px 7px;background:#fff3e0;color:#e65100;}
 
-  /* BRACKET CANVAS PANEL */
-  .bracket-panel{border:2px solid var(--ink);background:white;padding:0;}
-  .bracket-title{font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:3px;text-transform:uppercase;color:var(--muted);padding:12px 16px 0;}
-  .bracket-scroll{overflow-x:auto;overflow-y:auto;-webkit-overflow-scrolling:touch;}
-  #bracket-canvas{display:block;cursor:default;}
+  /* BRACKET VIEW */
+  #bracket-view{display:none;height:calc(100vh - 120px);overflow:auto;background:#faf7f0;padding:20px;}
+  #bracket-canvas{display:block;}
 
   /* RESULTS */
   .results-body{max-width:680px;margin:0 auto;padding:32px 24px;text-align:center;}
@@ -617,7 +684,7 @@
   .results-table tr.top td{font-weight:700;color:var(--accent);}
 
   @media(max-width:900px){
-    .host-grid{grid-template-columns:1fr;}
+    .controls-grid{grid-template-columns:1fr;}
     .versus-row{grid-template-columns:1fr 28px 1fr;}
   }
 </style>
@@ -633,8 +700,13 @@
   </div>
   <div class="setup-body">
     <div class="setup-headline">Confirm the Pitches</div>
-    <div class="setup-deck">18 pitches loaded — edit titles if needed, then randomize and begin</div>
+    <div class="setup-deck" id="setup-deck">18 pitches loaded</div>
     <div class="pitch-grid" id="pitch-grid"></div>
+    <div class="add-pitch-row">
+      <input class="add-pitch-input" id="new-pitch-input" type="text"
+        placeholder="Add a late pitch…" onkeydown="addPitchOnEnter(event)">
+      <button class="btn secondary" onclick="addPitch()">+ Add</button>
+    </div>
     <div class="btn-row">
       <button class="btn" onclick="startTournament()">🎲 Randomize Bracket &amp; Begin</button>
     </div>
@@ -648,9 +720,18 @@
     <h1>The <span>Current</span></h1>
     <div class="masthead-sub" id="host-round-label">Double Elimination Tournament</div>
   </div>
-  <div class="host-body">
-    <div class="host-grid">
-      <!-- LEFT: controls -->
+
+  <!-- TOOLBAR -->
+  <div class="host-toolbar">
+    <span class="host-toolbar-title">Host Controls</span>
+    <button class="btn bracket-btn" onclick="showBracket()">📊 View Bracket</button>
+    <button class="btn secondary" onclick="resetTournament()" style="font-size:10px;padding:7px 14px;border-color:#bbb;color:#999;">Reset</button>
+  </div>
+
+  <!-- CONTROLS VIEW -->
+  <div id="controls-view">
+    <div class="controls-grid">
+      <!-- LEFT: matchup -->
       <div>
         <div class="matchup-card">
           <div class="matchup-label">
@@ -681,35 +762,35 @@
           <div class="matchup-result" id="matchup-result"></div>
           <div class="host-controls">
             <button class="btn" id="start-btn" onclick="startMatchup()">▶ Start Voting</button>
-            <button class="btn danger" id="end-early-btn" onclick="endVoteEarly()" style="display:none">⏹ End Vote Early</button>
+            <button class="btn danger" id="end-early-btn" onclick="endVoteEarly()" style="display:none">⏹ End Early</button>
             <button class="btn secondary" id="next-btn" onclick="advanceMatchup()" style="display:none">Next Matchup →</button>
-            <button class="btn secondary" onclick="resetTournament()" style="border-color:#bbb;color:#999;font-size:10px;padding:8px 14px;">Reset</button>
           </div>
         </div>
+      </div>
 
+      <!-- RIGHT: QR + field status -->
+      <div class="right-col">
         <div class="join-panel">
           <div class="join-headline">Voter URL — share with audience</div>
           <div class="join-url" id="voter-url">—</div>
           <div id="qr-container" style="margin:12px auto 4px;display:flex;justify-content:center;"></div>
           <div style="font-family:'IBM Plex Mono',monospace;font-size:9px;color:var(--muted);text-align:center;letter-spacing:1px;">SCAN TO VOTE</div>
         </div>
-
         <div class="elim-section">
           <div class="elim-title">Field Status</div>
           <div class="elim-pills" id="field-status"></div>
         </div>
       </div>
-
-      <!-- RIGHT: bracket -->
-      <div>
-        <div class="bracket-panel">
-          <div class="bracket-title">Tournament Bracket</div>
-          <div class="bracket-scroll">
-            <canvas id="bracket-canvas" height="420"></canvas>
-          </div>
-        </div>
-      </div>
     </div>
+  </div>
+
+  <!-- BRACKET VIEW (fullscreen toggle) -->
+  <div id="bracket-view">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;">
+      <button class="btn secondary" onclick="showControls()" style="font-size:11px;padding:8px 16px;">← Back to Controls</button>
+      <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:2px;text-transform:uppercase;color:var(--muted);">Tournament Bracket — scroll to explore</span>
+    </div>
+    <canvas id="bracket-canvas"></canvas>
   </div>
 </div>
 
