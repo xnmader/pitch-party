@@ -25,22 +25,20 @@
   const VOTE_DURATION = 30;
   const DEFAULT_PITCHES = [
     "The Bridge Ministry","The Mouton Land Question","LPSS Satellite Bus Stops",
-    "E-bikes and Scooters","Cy, Age 5: Trucks","I-49 'Go West at Carencro'",
+    "E-bikes and Scooters","Cy, Age 5: Trucks","I-49 \'Go West at Carencro\'",
     "Noise Pollution","Downtown Grocery Desert","Recycling Scam?",
     "North Lafayette Development","DEQ Chemtrail Reports","The Flag Runner",
     "Short-Term Rental Enforcement","The Freeze","Right On Fashion",
     "Bus Stop Shelter Gap","Palantir & Flock Cameras","Road Striping"
   ];
 
-  // groups: array of 3, each is array of pitch names
-  let setupGroups = [[], [], []];
+  let setupGroups = [[],[],[]];
   let unassigned = [...DEFAULT_PITCHES];
   let timerInterval = null;
   let stateUnsub = null;
   let lastState = null;
   let bracketVisible = false;
 
-  // ── SCREENS ──
   function showScreen(id) {
     document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
     document.getElementById(id).classList.add('active');
@@ -48,14 +46,13 @@
 
   // ── SETUP ──
   function renderSetup() {
-    // Unassigned pool
     const pool = document.getElementById('unassigned-pool');
     pool.innerHTML = '';
     unassigned.forEach((p, i) => {
       const chip = document.createElement('div');
       chip.className = 'pitch-chip';
       chip.innerHTML = `<span>${p}</span>
-        <select onchange="assignPitch(${i}, this.value); this.value=''" style="font-family:'IBM Plex Mono',monospace;font-size:9px;border:none;background:transparent;cursor:pointer;color:var(--muted);">
+        <select onchange="assignPitch(${i}, this.value); this.value=\'\'">
           <option value="">→ Group</option>
           <option value="0">Group A</option>
           <option value="1">Group B</option>
@@ -63,9 +60,6 @@
         </select>`;
       pool.appendChild(chip);
     });
-
-    // Add pitch input
-    // Groups
     [0,1,2].forEach(g => {
       const list = document.getElementById(`group-${g}-list`);
       list.innerHTML = '';
@@ -73,31 +67,26 @@
         const item = document.createElement('div');
         item.className = 'group-item';
         item.innerHTML = `<span>${p}</span>
-          <button onclick="unassignPitch(${g},${i})" style="border:none;background:none;cursor:pointer;color:#bbb;font-size:14px;">×</button>`;
+          <button onclick="unassignPitch(${g},${i})">×</button>`;
         list.appendChild(item);
       });
       document.getElementById(`group-${g}-count`).textContent = `${setupGroups[g].length} pitches`;
     });
-
-    const total = setupGroups.reduce((s,g)=>s+g.length,0);
+    const remaining = unassigned.length;
     document.getElementById('setup-status').textContent =
-      unassigned.length > 0
-        ? `${unassigned.length} pitches unassigned`
-        : `All ${total} pitches assigned — ready to begin`;
+      remaining > 0 ? `${remaining} pitches unassigned` : `All pitches assigned — ready to begin`;
   }
 
-  window.assignPitch = function(poolIdx, groupIdx) {
-    if (groupIdx === '') return;
-    const name = unassigned[poolIdx];
-    unassigned.splice(poolIdx, 1);
-    setupGroups[parseInt(groupIdx)].push(name);
+  window.assignPitch = function(i, g) {
+    if (g === \'\') return;
+    setupGroups[parseInt(g)].push(unassigned[i]);
+    unassigned.splice(i, 1);
     renderSetup();
   };
 
   window.unassignPitch = function(g, i) {
-    const name = setupGroups[g][i];
+    unassigned.push(setupGroups[g][i]);
     setupGroups[g].splice(i, 1);
-    unassigned.push(name);
     renderSetup();
   };
 
@@ -106,53 +95,40 @@
     const name = inp.value.trim();
     if (!name) return;
     unassigned.push(name);
-    inp.value = '';
+    inp.value = \'\';
     renderSetup();
   };
 
-  window.addOnEnter = function(e) { if (e.key==='Enter') window.addNewPitch(); };
+  window.addOnEnter = function(e) { if (e.key === \'Enter\') window.addNewPitch(); };
 
   window.autoAssign = function() {
-    // Shuffle unassigned and distribute evenly
-    const all = [...unassigned];
+    const all = [...unassigned, ...setupGroups.flat()];
     for (let i=all.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[all[i],all[j]]=[all[j],all[i]];}
-    setupGroups = [[],[],[]];
+    setupGroups=[[],[],[]];
     all.forEach((p,i) => setupGroups[i%3].push(p));
-    unassigned = [];
+    unassigned=[];
     renderSetup();
   };
 
-  // ── START TOURNAMENT ──
+  // ── START ──
   window.startTournament = async function() {
-    if (unassigned.length > 0) {
-      if (!confirm(`${unassigned.length} pitches are still unassigned. Continue anyway?`)) return;
-    }
+    if (unassigned.length > 0 && !confirm(`${unassigned.length} pitches unassigned. Continue?`)) return;
     const groups = setupGroups.filter(g=>g.length>0);
-    if (groups.length < 1) { alert('Assign at least one group first.'); return; }
-
-    const groupStages = groups.map((pitches, gi) => ({
-      name: ['A','B','C'][gi],
+    if (!groups.length) { alert('Assign pitches first.'); return; }
+    const groupStages = groups.map((pitches,gi) => ({
+      name: [\'A\',\'B\',\'C\'][gi],
       pitches,
       votes: Object.fromEntries(pitches.map(p=>[p,0])),
-      open: false,
-      closed: false,
-      timerSeconds: VOTE_DURATION
+      open: false, closed: false, timerSeconds: VOTE_DURATION
     }));
-
-    await set(ref(db,'tournament'), {
-      phase: 'group',
-      groupStages,
-      currentGroup: 0,
-      knockoutMatchups: [],
-      knockoutIndex: 0,
-      timerSeconds: VOTE_DURATION,
-      votingOpen: false,
-      tournamentStarted: true,
-      tournamentComplete: false,
-      ts: Date.now()
+    await set(ref(db,\'tournament\'), {
+      phase: \'group\', groupStages, currentGroup: 0,
+      knockoutMatchups: [], knockoutIndex: 0,
+      timerSeconds: VOTE_DURATION, votingOpen: false,
+      tournamentStarted: true, tournamentComplete: false, ts: Date.now()
     });
-    await set(ref(db,'votes'), null);
-    showScreen('host-screen');
+    await set(ref(db,\'votes\'), null);
+    showScreen(\'host-screen\');
     bracketVisible = false;
     subscribeState();
     updateVoterURL();
@@ -161,7 +137,7 @@
   // ── SUBSCRIBE ──
   function subscribeState() {
     if (stateUnsub) stateUnsub();
-    stateUnsub = onValue(ref(db,'tournament'), snap => {
+    stateUnsub = onValue(ref(db,\'tournament\'), snap => {
       const s = snap.val();
       if (!s) return;
       lastState = s;
@@ -172,637 +148,558 @@
 
   // ── BRACKET TOGGLE ──
   window.showBracket = function() {
-    bracketVisible = true;
-    document.getElementById('controls-view').style.display='none';
-    document.getElementById('bracket-view').style.display='block';
-    if (lastState) drawBracket(lastState);
+    bracketVisible=true;
+    document.getElementById(\'controls-view\').style.display=\'none\';
+    document.getElementById(\'bracket-view\').style.display=\'block\';
+    if(lastState) drawBracket(lastState);
   };
   window.showControls = function() {
-    bracketVisible = false;
-    document.getElementById('bracket-view').style.display='none';
-    document.getElementById('controls-view').style.display='block';
-    if (lastState) renderHost(lastState);
+    bracketVisible=false;
+    document.getElementById(\'bracket-view\').style.display=\'none\';
+    document.getElementById(\'controls-view\').style.display=\'block\';
+    if(lastState) renderHost(lastState);
   };
 
-  // ── HOST: OPEN GROUP VOTE ──
+  // ── HOST: GROUP VOTING ──
   window.openGroupVote = async function() {
     if (timerInterval) clearInterval(timerInterval);
-    const snap = await get(ref(db,'tournament'));
-    const s = snap.val();
-    const gi = s.currentGroup;
-    await update(ref(db,'tournament'), {
-      votingOpen: true,
-      timerSeconds: VOTE_DURATION,
-      ts: Date.now()
-    });
-    await update(ref(db,`tournament/groupStages/${gi}`), { open: true });
-    document.getElementById('start-btn').style.display='none';
-    document.getElementById('end-early-btn').style.display='inline-block';
+    const gi = lastState.currentGroup;
+    await update(ref(db,\'tournament\'), { votingOpen:true, timerSeconds:VOTE_DURATION, ts:Date.now() });
+    await update(ref(db,`tournament/groupStages/${gi}`), { open:true });
+    document.getElementById(\'start-btn\').style.display=\'none\';
+    document.getElementById(\'end-early-btn\').style.display=\'inline-block\';
     let secs = VOTE_DURATION;
     timerInterval = setInterval(async () => {
       secs--;
-      await update(ref(db,'tournament'), { timerSeconds: secs, ts: Date.now() });
+      await update(ref(db,\'tournament\'), { timerSeconds:secs, ts:Date.now() });
       if (secs<=0) { clearInterval(timerInterval); await closeGroupVote(); }
     }, 1000);
   };
 
   window.endVoteEarly = async function() {
     if (timerInterval) clearInterval(timerInterval);
-    await update(ref(db,'tournament'), { timerSeconds:0, ts:Date.now() });
-    if (lastState && lastState.phase==='group') await closeGroupVote();
+    await update(ref(db,\'tournament\'), { timerSeconds:0, ts:Date.now() });
+    if (lastState && lastState.phase===\'group\') await closeGroupVote();
+    else if (lastState && lastState.phase===\'final\') await closeFinalVote();
     else await closeKnockoutMatchup();
   };
 
   async function closeGroupVote() {
-    const eb=document.getElementById('end-early-btn');
-    if (eb) eb.style.display='none';
-    const snap = await get(ref(db,'tournament'));
+    const eb=document.getElementById(\'end-early-btn\');
+    if(eb) eb.style.display=\'none\';
+    const snap = await get(ref(db,\'tournament\'));
     const s = snap.val();
     const gi = s.currentGroup;
     await update(ref(db,`tournament/groupStages/${gi}`), { open:false, closed:true });
-    await update(ref(db,'tournament'), { votingOpen:false, ts:Date.now() });
+    await update(ref(db,\'tournament\'), { votingOpen:false, ts:Date.now() });
   }
 
-  // ── HOST: ADVANCE GROUP / START KNOCKOUT ──
+  // ── HOST: ADVANCE GROUP ──
   window.advanceGroup = async function() {
-    const snap = await get(ref(db,'tournament'));
+    const snap = await get(ref(db,\'tournament\'));
     const s = snap.val();
-    const nextGroup = s.currentGroup + 1;
-
-    if (nextGroup >= s.groupStages.length) {
-      // All groups done — build knockout
+    const next = s.currentGroup + 1;
+    if (next >= s.groupStages.length) {
       await buildKnockout(s);
     } else {
-      await update(ref(db,'tournament'), {
-        currentGroup: nextGroup,
-        timerSeconds: VOTE_DURATION,
-        votingOpen: false,
-        ts: Date.now()
-      });
+      await update(ref(db,\'tournament\'), { currentGroup:next, timerSeconds:VOTE_DURATION, votingOpen:false, ts:Date.now() });
     }
   };
 
   async function buildKnockout(s) {
-    // Get top 2 from each group
+    // Top 2 from each group → 6 finalists
     const finalists = [];
     s.groupStages.forEach(g => {
       const sorted = Object.entries(g.votes).sort((a,b)=>b[1]-a[1]);
       finalists.push(sorted[0][0]);
-      if (sorted[1]) finalists.push(sorted[1][0]);
+      if(sorted[1]) finalists.push(sorted[1][0]);
     });
-
-    // Shuffle finalists and build single-elim bracket
+    // Shuffle and pair into 3 semifinal matchups
     const shuffled = shuffle(finalists);
-    const matchups = buildSingleElim(shuffled, 1);
-
-    await update(ref(db,'tournament'), {
-      phase: 'knockout',
-      knockoutMatchups: matchups,
-      knockoutIndex: 0,
-      knockoutFinalists: finalists,
-      timerSeconds: VOTE_DURATION,
-      votingOpen: false,
-      ts: Date.now()
+    const semis = [];
+    for(let i=0;i+1<shuffled.length;i+=2)
+      semis.push({a:shuffled[i],b:shuffled[i+1],winner:null,aVotes:0,bVotes:0,round:\'Semifinal\',tiebreak:false});
+    await update(ref(db,\'tournament\'), {
+      phase:\'knockout\', knockoutMatchups:semis, knockoutIndex:0,
+      knockoutFinalists:finalists, timerSeconds:VOTE_DURATION, votingOpen:false, ts:Date.now()
     });
-  }
-
-  function buildSingleElim(competitors, round) {
-    const out = [];
-    for (let i=0; i+1<competitors.length; i+=2)
-      out.push({ a:competitors[i], b:competitors[i+1],
-        winner:null, aVotes:0, bVotes:0, round:`Semifinal`, tiebreak:false });
-    return out;
   }
 
   // ── HOST: KNOCKOUT ──
   window.openKnockoutVote = async function() {
     if (timerInterval) clearInterval(timerInterval);
-    await update(ref(db,'tournament'), { votingOpen:true, timerSeconds:VOTE_DURATION, ts:Date.now() });
-    document.getElementById('start-btn').style.display='none';
-    document.getElementById('end-early-btn').style.display='inline-block';
+    await update(ref(db,\'tournament\'), { votingOpen:true, timerSeconds:VOTE_DURATION, ts:Date.now() });
+    document.getElementById(\'start-btn\').style.display=\'none\';
+    document.getElementById(\'end-early-btn\').style.display=\'inline-block\';
     let secs = VOTE_DURATION;
     timerInterval = setInterval(async () => {
       secs--;
-      await update(ref(db,'tournament'), { timerSeconds:secs, ts:Date.now() });
-      if (secs<=0) { clearInterval(timerInterval); await closeKnockoutMatchup(); }
+      await update(ref(db,\'tournament\'), { timerSeconds:secs, ts:Date.now() });
+      if(secs<=0) { clearInterval(timerInterval); await closeKnockoutMatchup(); }
     }, 1000);
   };
 
   async function closeKnockoutMatchup() {
-    const eb=document.getElementById('end-early-btn');
-    if (eb) eb.style.display='none';
-    const snap = await get(ref(db,'tournament'));
+    const eb=document.getElementById(\'end-early-btn\');
+    if(eb) eb.style.display=\'none\';
+    const snap = await get(ref(db,\'tournament\'));
     const s = snap.val();
     const idx = s.knockoutIndex;
     const m = s.knockoutMatchups[idx];
-    if (!m) return;
-    const winnerName = m.aVotes>=m.bVotes ? m.a : m.b;
+    if(!m) return;
+    const winnerName = m.aVotes>=m.bVotes?m.a:m.b;
     const tiebreak = m.aVotes===m.bVotes;
     const matchups = [...s.knockoutMatchups];
     matchups[idx] = {...m, winner:winnerName, tiebreak};
-    await update(ref(db,'tournament'), { knockoutMatchups:matchups, votingOpen:false, ts:Date.now() });
+    await update(ref(db,\'tournament\'), { knockoutMatchups:matchups, votingOpen:false, ts:Date.now() });
   }
 
   window.advanceKnockout = async function() {
-    const snap = await get(ref(db,'tournament'));
+    const snap = await get(ref(db,\'tournament\'));
     const s = snap.val();
     const nextIdx = s.knockoutIndex + 1;
     let matchups = [...s.knockoutMatchups];
-    let tournamentComplete = false;
 
     if (nextIdx >= matchups.length) {
-      // Build next round from winners
+      // All semis done — build 3-way final
       const winners = matchups.filter(m=>m.winner).map(m=>m.winner);
-      if (winners.length === 1) {
-        tournamentComplete = true;
-      } else {
-        const roundName = winners.length === 2 ? 'Final' : 'Semifinal';
-        const newMatchups = [];
-        for (let i=0; i+1<winners.length; i+=2)
-          newMatchups.push({ a:winners[i], b:winners[i+1],
-            winner:null, aVotes:0, bVotes:0, round:roundName, tiebreak:false });
-        matchups = [...matchups, ...newMatchups];
+      if (winners.length >= 2) {
+        await update(ref(db,\'tournament\'), {
+          phase: \'final\',
+          finalCandidates: winners,
+          finalVotes: Object.fromEntries(winners.map(w=>[w,0])),
+          finalOpen: false, finalClosed: false,
+          knockoutIndex: nextIdx, knockoutMatchups: matchups,
+          timerSeconds: VOTE_DURATION, votingOpen: false, ts: Date.now()
+        });
+        return;
       }
     }
-
-    await update(ref(db,'tournament'), {
-      knockoutIndex: nextIdx,
-      knockoutMatchups: matchups,
-      tournamentComplete,
-      timerSeconds: VOTE_DURATION,
-      votingOpen: false,
-      ts: Date.now()
+    await update(ref(db,\'tournament\'), {
+      knockoutIndex:nextIdx, knockoutMatchups:matchups,
+      timerSeconds:VOTE_DURATION, votingOpen:false, ts:Date.now()
     });
   };
 
+  // ── HOST: FINAL ──
+  window.openFinalVote = async function() {
+    if (timerInterval) clearInterval(timerInterval);
+    await update(ref(db,\'tournament\'), { votingOpen:true, finalOpen:true, timerSeconds:VOTE_DURATION, ts:Date.now() });
+    document.getElementById(\'start-btn\').style.display=\'none\';
+    document.getElementById(\'end-early-btn\').style.display=\'inline-block\';
+    let secs = VOTE_DURATION;
+    timerInterval = setInterval(async () => {
+      secs--;
+      await update(ref(db,\'tournament\'), { timerSeconds:secs, ts:Date.now() });
+      if(secs<=0) { clearInterval(timerInterval); await closeFinalVote(); }
+    }, 1000);
+  };
+
+  async function closeFinalVote() {
+    const eb=document.getElementById(\'end-early-btn\');
+    if(eb) eb.style.display=\'none\';
+    const snap = await get(ref(db,\'tournament\'));
+    const s = snap.val();
+    const votes = s.finalVotes || {};
+    const winner = Object.entries(votes).sort((a,b)=>b[1]-a[1])[0][0];
+    await update(ref(db,\'tournament\'), {
+      votingOpen:false, finalOpen:false, finalClosed:true,
+      finalWinner:winner, tournamentComplete:true, ts:Date.now()
+    });
+  }
+
   function shuffle(arr) {
     const a=[...arr];
-    for (let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];}
+    for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];}
     return a;
   }
 
   // ── RENDER HOST ──
   function renderHost(s) {
     if (s.tournamentComplete) { renderResults(s); return; }
-    if (s.phase==='group') renderGroupHost(s);
-    else renderKnockoutHost(s);
+    if (s.phase===\'group\') renderGroupHost(s);
+    else if (s.phase===\'knockout\') renderKnockoutHost(s);
+    else if (s.phase===\'final\') renderFinalHost(s);
+  }
+
+  function setTimer(s) {
+    const secs=s.timerSeconds!==undefined?s.timerSeconds:VOTE_DURATION;
+    const tEl=document.getElementById(\'host-timer\');
+    if(tEl){tEl.textContent=secs;tEl.classList.toggle(\'urgent\',secs<=10);}
+    const bar=document.getElementById(\'timer-bar\');
+    if(bar) bar.style.width=Math.max(0,secs/VOTE_DURATION*100)+\'%\';
+  }
+
+  function setButtons(mode, startFn, nextFn) {
+    const sb=document.getElementById(\'start-btn\');
+    const nb=document.getElementById(\'next-btn\');
+    const eb=document.getElementById(\'end-early-btn\');
+    sb.onclick=startFn; nb.onclick=nextFn;
+    if(mode===\'ready\'){sb.style.display=\'inline-block\';nb.style.display=\'none\';eb.style.display=\'none\';}
+    else if(mode===\'voting\'){sb.style.display=\'none\';nb.style.display=\'none\';eb.style.display=\'inline-block\';}
+    else if(mode===\'done\'){sb.style.display=\'none\';nb.style.display=\'inline-block\';eb.style.display=\'none\';}
   }
 
   function renderGroupHost(s) {
-    const gi = s.currentGroup;
-    const g = s.groupStages[gi];
-    if (!g) return;
-
-    document.getElementById('host-round-label').textContent = `Group ${g.name} — Audience Vote`;
-    document.getElementById('phase-badge').textContent = `GROUP STAGE · ${gi+1} of ${s.groupStages.length}`;
-
-    // Render pitch list with live vote counts
-    const votes = g.votes || {};
-    const sorted = [...g.pitches].sort((a,b)=>(votes[b]||0)-(votes[a]||0));
-    const maxV = Math.max(...Object.values(votes), 1);
-    const total = Object.values(votes).reduce((s,v)=>s+v,0);
-
-    let html = '';
-    sorted.forEach((p, i) => {
-      const v = votes[p] || 0;
-      const pct = total ? Math.round(v/total*100) : 0;
-      const isTop2 = i < 2 && g.closed;
-      html += `<div class="group-pitch-row ${isTop2?'advancing':''}">
-        <div class="group-pitch-rank">${i+1}</div>
-        <div class="group-pitch-name">${p}</div>
-        <div class="group-pitch-bar-wrap"><div class="group-pitch-bar" style="width:${total?pct:0}%"></div></div>
-        <div class="group-pitch-votes">${v}</div>
-        ${isTop2?'<div class="advancing-badge">ADVANCES</div>':''}
-      </div>`;
-    });
-    document.getElementById('group-pitches').innerHTML = html;
-
-    const secs = s.timerSeconds!==undefined?s.timerSeconds:VOTE_DURATION;
-    const tEl=document.getElementById('host-timer');
-    tEl.textContent=secs;
-    tEl.classList.toggle('urgent',secs<=10);
-    const bar=document.getElementById('timer-bar');
-    if (bar) bar.style.width=Math.max(0,secs/VOTE_DURATION*100)+'%';
-
-    document.getElementById('vote-total').textContent =
-      `${total} vote${total!==1?'s':''} cast`;
-
-    const sb=document.getElementById('start-btn');
-    const nb=document.getElementById('next-btn');
-    const eb=document.getElementById('end-early-btn');
-    sb.onclick = openGroupVote;
-
-    if (g.closed) {
-      sb.style.display='none'; eb.style.display='none';
-      nb.style.display='inline-block';
-      const isLast = gi+1 >= s.groupStages.length;
-      nb.textContent = isLast ? 'Build Knockout Bracket →' : `Next Group (${['A','B','C'][gi+1]}) →`;
-      nb.onclick = advanceGroup;
-      document.getElementById('matchup-result').textContent =
-        `✓ Group ${g.name} complete — top 2 advance`;
-      document.getElementById('matchup-result').style.display='block';
-    } else if (s.votingOpen) {
-      sb.style.display='none'; nb.style.display='none'; eb.style.display='inline-block';
-      document.getElementById('matchup-result').style.display='none';
+    const gi=s.currentGroup;
+    const g=s.groupStages[gi];
+    if(!g) return;
+    document.getElementById(\'host-round-label\').textContent=`Group ${g.name} — Audience Vote`;
+    document.getElementById(\'phase-badge\').textContent=`GROUP ${gi+1}/${s.groupStages.length}`;
+    setTimer(s);
+    const votes=g.votes||{};
+    const total=Object.values(votes).reduce((a,v)=>a+v,0);
+    const sorted=[...g.pitches].sort((a,b)=>(votes[b]||0)-(votes[a]||0));
+    const maxV=Math.max(...sorted.map(p=>votes[p]||0),1);
+    document.getElementById(\'main-content\').innerHTML=sorted.map((p,i)=>{
+      const v=votes[p]||0;
+      const adv=g.closed&&i<2;
+      return `<div class="grow${adv?\' adv\':\'\'}}">
+        <div class="grow-rank">${i+1}</div>
+        <div class="grow-name">${p}</div>
+        <div class="grow-bar-wrap"><div class="grow-bar" style="width:${total?(v/maxV*100):0}%"></div></div>
+        <div class="grow-votes">${v}</div>
+        ${adv?\'<span class=\"adv-badge\">ADVANCES</span>\':\'\'}</div>`;
+    }).join(\'\');
+    document.getElementById(\'vote-total\').textContent=`${total} vote${total!==1?\'s\':\'\'} cast`;
+    const res=document.getElementById(\'matchup-result\');
+    if(g.closed){
+      res.textContent=`✓ Group ${g.name} complete`;res.style.display=\'block\';
+      const isLast=gi+1>=s.groupStages.length;
+      document.getElementById(\'next-btn\').textContent=isLast?\'Build Knockout →\':`Next: Group ${[\'A\',\'B\',\'C\'][gi+1]} →`;
+      setButtons(\'done\',openGroupVote,advanceGroup);
+    } else if(s.votingOpen){
+      res.style.display=\'none\';setButtons(\'voting\',openGroupVote,advanceGroup);
     } else {
-      sb.style.display='inline-block'; nb.style.display='none'; eb.style.display='none';
-      document.getElementById('matchup-result').style.display='none';
+      res.style.display=\'none\';setButtons(\'ready\',openGroupVote,advanceGroup);
     }
   }
 
   function renderKnockoutHost(s) {
-    const idx = s.knockoutIndex;
-    const m = (s.knockoutMatchups||[])[idx];
-    if (!m) { renderResults(s); return; }
-
-    document.getElementById('host-round-label').textContent = `${m.round} — Knockout Stage`;
-    document.getElementById('phase-badge').textContent = `KNOCKOUT`;
-
-    document.getElementById('group-pitches').innerHTML = `
+    const idx=s.knockoutIndex;
+    const m=(s.knockoutMatchups||[])[idx];
+    if(!m){renderResults(s);return;}
+    document.getElementById(\'host-round-label\').textContent=`${m.round} — Knockout`;
+    document.getElementById(\'phase-badge\').textContent=`SEMIFINAL ${idx+1}/3`;
+    setTimer(s);
+    const aV=m.aVotes||0,bV=m.bVotes||0,tot=aV+bV;
+    document.getElementById(\'main-content\').innerHTML=`
       <div class="versus-row">
-        <div class="competitor ${(m.aVotes||0)>(m.bVotes||0)?'leading':''}">
+        <div class="competitor${aV>bV?\' leading\':\'\'}}">
           <div class="competitor-name">${m.a}</div>
-          <div class="competitor-votes">${m.aVotes||0}</div>
-          <div class="vote-bar-wrap"><div class="vote-bar" style="width:${votePct(m.aVotes,m.bVotes)}%"></div></div>
-          <div class="competitor-pct">${votePctLabel(m.aVotes,m.bVotes)}</div>
+          <div class="competitor-votes">${aV}</div>
+          <div class="vote-bar-wrap"><div class="vote-bar" style="width:${tot?Math.round(aV/tot*100):50}%"></div></div>
+          <div class="competitor-pct">${tot?Math.round(aV/tot*100)+\'%\':\'\'}</div>
         </div>
         <div class="vs-label">vs</div>
-        <div class="competitor ${(m.bVotes||0)>(m.aVotes||0)?'leading':''}">
+        <div class="competitor${bV>aV?\' leading\':\'\'}}">
           <div class="competitor-name">${m.b}</div>
-          <div class="competitor-votes">${m.bVotes||0}</div>
-          <div class="vote-bar-wrap"><div class="vote-bar" style="width:${votePct(m.bVotes,m.aVotes)}%"></div></div>
-          <div class="competitor-pct">${votePctLabel(m.bVotes,m.aVotes)}</div>
+          <div class="competitor-votes">${bV}</div>
+          <div class="vote-bar-wrap"><div class="vote-bar" style="width:${tot?Math.round(bV/tot*100):50}%"></div></div>
+          <div class="competitor-pct">${tot?Math.round(bV/tot*100)+\'%\':\'\'}</div>
         </div>
       </div>`;
-
-    const secs=s.timerSeconds!==undefined?s.timerSeconds:VOTE_DURATION;
-    const tEl=document.getElementById('host-timer');
-    tEl.textContent=secs;
-    tEl.classList.toggle('urgent',secs<=10);
-    const bar=document.getElementById('timer-bar');
-    if (bar) bar.style.width=Math.max(0,secs/VOTE_DURATION*100)+'%';
-
-    const tot=(m.aVotes||0)+(m.bVotes||0);
-    document.getElementById('vote-total').textContent=`${tot} vote${tot!==1?'s':''} cast`;
-
-    const sb=document.getElementById('start-btn');
-    const nb=document.getElementById('next-btn');
-    const eb=document.getElementById('end-early-btn');
-    sb.onclick = openKnockoutVote;
-
-    if (m.winner) {
-      sb.style.display='none'; eb.style.display='none'; nb.style.display='inline-block';
-      nb.textContent = 'Next Matchup →';
-      nb.onclick = advanceKnockout;
-      document.getElementById('matchup-result').textContent=`✓ ${m.winner} advances${m.tiebreak?' (tiebreak)':''}`;
-      document.getElementById('matchup-result').style.display='block';
-    } else if (s.votingOpen) {
-      sb.style.display='none'; nb.style.display='none'; eb.style.display='inline-block';
-      document.getElementById('matchup-result').style.display='none';
+    document.getElementById(\'vote-total\').textContent=`${tot} vote${tot!==1?\'s\':\'\'} cast`;
+    const res=document.getElementById(\'matchup-result\');
+    if(m.winner){
+      res.textContent=`✓ ${m.winner} advances${m.tiebreak?\' (tiebreak)\':\'\'}}`;res.style.display=\'block\';
+      document.getElementById(\'next-btn\').textContent=idx+1<(s.knockoutMatchups.length)?\'Next Semifinal →\':\'Go to Final →\';
+      setButtons(\'done\',openKnockoutVote,advanceKnockout);
+    } else if(s.votingOpen){
+      res.style.display=\'none\';setButtons(\'voting\',openKnockoutVote,advanceKnockout);
     } else {
-      sb.style.display='inline-block'; nb.style.display='none'; eb.style.display='none';
-      document.getElementById('matchup-result').style.display='none';
+      res.style.display=\'none\';setButtons(\'ready\',openKnockoutVote,advanceKnockout);
     }
   }
 
-  function votePct(a,b) {
-    const t=(a||0)+(b||0);
-    return t ? Math.round((a||0)/t*100) : 50;
-  }
-  function votePctLabel(a,b) {
-    const t=(a||0)+(b||0);
-    return t ? Math.round((a||0)/t*100)+'%' : '';
+  function renderFinalHost(s) {
+    document.getElementById(\'host-round-label\').textContent=\'The Final — Pick a Winner\';
+    document.getElementById(\'phase-badge\').textContent=\'FINAL\';
+    setTimer(s);
+    const candidates=s.finalCandidates||[];
+    const votes=s.finalVotes||{};
+    const total=Object.values(votes).reduce((a,v)=>a+v,0);
+    const maxV=Math.max(...candidates.map(c=>votes[c]||0),1);
+    const sorted=[...candidates].sort((a,b)=>(votes[b]||0)-(votes[a]||0));
+    document.getElementById(\'main-content\').innerHTML=sorted.map((p,i)=>{
+      const v=votes[p]||0;
+      const isWin=s.finalClosed&&i===0;
+      return `<div class="grow${isWin?\' adv\':\'\'}}">
+        <div class="grow-rank">${i+1}</div>
+        <div class="grow-name">${p}</div>
+        <div class="grow-bar-wrap"><div class="grow-bar" style="width:${total?(v/maxV*100):0}%"></div></div>
+        <div class="grow-votes">${v}</div>
+        ${isWin?\'<span class=\"adv-badge\">🏆 WINNER</span>\':\'\'}</div>`;
+    }).join(\'\');
+    document.getElementById(\'vote-total\').textContent=`${total} vote${total!==1?\'s\':\'\'} cast`;
+    const res=document.getElementById(\'matchup-result\');
+    if(s.finalClosed){
+      res.textContent=`🏆 ${s.finalWinner} wins!`;res.style.display=\'block\';
+      document.getElementById(\'next-btn\').textContent=\'View Results\';
+      document.getElementById(\'next-btn\').onclick=()=>renderResults(s);
+      setButtons(\'done\',openFinalVote,()=>renderResults(s));
+    } else if(s.votingOpen){
+      res.style.display=\'none\';setButtons(\'voting\',openFinalVote,null);
+    } else {
+      res.style.display=\'none\';setButtons(\'ready\',openFinalVote,null);
+    }
   }
 
-  // ── BRACKET DRAWING ──
+  // ── BRACKET ──
   function drawBracket(s) {
-    const canvas = document.getElementById('bracket-canvas');
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
+    const canvas=document.getElementById(\'bracket-canvas\');
+    if(!canvas) return;
+    const ctx=canvas.getContext(\'2d\');
+    const BOX_W=155,ENTRY_H=30,GAP_Y=8,RGAP=48,PAD=24;
+    const INK=\'#1a1208\',ACCENT=\'#c8392b\',GOLD=\'#d4a017\',GREEN=\'#2e7d32\',MUTED=\'#6b5f4a\';
+    const groups=s.groupStages||[];
+    const km=s.knockoutMatchups||[];
+    const kRounds=groupByRound(km);
+    const kKeys=Object.keys(kRounds);
+    const colW=BOX_W+RGAP;
+    const groupColCount=groups.length;
+    const kColCount=kKeys.length+(s.phase===\'final\'||s.tournamentComplete?1:0);
+    const W=Math.max((groupColCount+kColCount)*colW+PAD*2,600);
+    const maxGRows=Math.max(...groups.map(g=>g.pitches.length),1);
+    const H=Math.max(maxGRows*(ENTRY_H+GAP_Y)+80,400);
+    canvas.width=W;canvas.height=H;canvas.style.width=W+\'px\';canvas.style.height=H+\'px\';
+    ctx.fillStyle=\'#faf7f0\';ctx.fillRect(0,0,W,H);
 
-    const BOX_W=160, ENTRY_H=30, GAP_Y=10, ROUND_GAP=50, PAD=30;
-    const INK='#1a1208', ACCENT='#c8392b', GOLD='#d4a017', GREEN='#2e7d32', MUTED='#6b5f4a';
-
-    // ── GROUP STAGE DISPLAY ──
-    const groups = s.groupStages || [];
-    const knockout = s.knockoutMatchups || [];
-
-    // Group columns + knockout columns
-    const groupColW = BOX_W + ROUND_GAP;
-    const maxGroupSize = Math.max(...groups.map(g=>g.pitches.length), 1);
-    const groupH = maxGroupSize * (ENTRY_H + GAP_Y) + 60;
-
-    // Knockout rounds
-    const kRounds = groupByRound(knockout);
-    const kKeys = Object.keys(kRounds);
-    const kCols = kKeys.length + (s.tournamentComplete ? 1 : 0);
-
-    const W = Math.max(groups.length * groupColW + kCols*(BOX_W+ROUND_GAP) + PAD*2, 700);
-    const H = Math.max(groupH + 60, 400);
-
-    canvas.width=W; canvas.height=H;
-    canvas.style.width=W+'px'; canvas.style.height=H+'px';
-
-    ctx.fillStyle='#faf7f0';
-    ctx.fillRect(0,0,W,H);
-
-    // Section labels
-    ctx.font='bold 9px IBM Plex Mono,monospace';
-    ctx.fillStyle=MUTED;
-    if (groups.length) ctx.fillText('GROUP STAGE', PAD, 16);
-    if (knockout.length) {
-      const kx = groups.length*groupColW+PAD;
-      ctx.fillText('KNOCKOUT', kx, 16);
-    }
-
-    // Draw divider
-    if (groups.length && knockout.length) {
-      const dx = groups.length*groupColW+PAD/2;
-      ctx.strokeStyle='#ddd'; ctx.setLineDash([4,4]); ctx.lineWidth=1;
-      ctx.beginPath(); ctx.moveTo(dx,20); ctx.lineTo(dx,H-10); ctx.stroke();
-      ctx.setLineDash([]);
-    }
-
-    // ── DRAW GROUPS ──
-    const groupFinalistPositions = []; // {x,y} of top 2 in each group for connectors
-    groups.forEach((g, gi) => {
-      const x = PAD + gi*groupColW;
-      const topY = 30;
-
-      // Group label
-      ctx.font='bold 11px IBM Plex Mono,monospace';
-      ctx.fillStyle=INK;
-      ctx.fillText(`GROUP ${g.name}`, x, topY);
-
-      const votes = g.votes || {};
-      const sorted = [...g.pitches].sort((a,b)=>(votes[b]||0)-(votes[a]||0));
-      const maxV = Math.max(...sorted.map(p=>votes[p]||0), 1);
-      const gFinalists = [];
-
-      sorted.forEach((p, pi) => {
-        const y = topY + 20 + pi*(ENTRY_H+GAP_Y);
-        const v = votes[p]||0;
-        const isTop2 = g.closed && pi<2;
-        const isCurrent = s.phase==='group' && s.currentGroup===gi && !g.closed;
-
-        // Box
-        ctx.fillStyle = isTop2 ? '#e8f5e9' : isCurrent ? '#fff8e1' : 'white';
-        ctx.strokeStyle = isTop2 ? '#a5d6a7' : isCurrent ? GOLD : '#ccc';
-        ctx.lineWidth = isCurrent ? 2 : 1;
-        ctx.fillRect(x, y, BOX_W, ENTRY_H);
-        ctx.strokeRect(x, y, BOX_W, ENTRY_H);
-
-        // Vote bar bg
-        if (g.open || g.closed) {
-          const barW = Math.max(0, (BOX_W-2) * (v/maxV));
-          ctx.fillStyle = isTop2 ? '#c8f7c5' : '#eee';
-          ctx.fillRect(x+1, y+ENTRY_H-7, barW, 5);
-        }
-
-        // Name
-        ctx.font = isTop2 ? 'bold 11px IBM Plex Sans,sans-serif' : '11px IBM Plex Sans,sans-serif';
-        ctx.fillStyle = isTop2 ? GREEN : INK;
-        ctx.fillText(trunc(p,18)+(isTop2?' ✓':''), x+6, y+ENTRY_H*0.65);
-
-        // Vote count
-        if (g.open || g.closed) {
-          ctx.font='10px IBM Plex Mono,monospace';
-          ctx.fillStyle=MUTED;
-          ctx.textAlign='right';
-          ctx.fillText(v, x+BOX_W-4, y+ENTRY_H*0.65);
-          ctx.textAlign='left';
-        }
-
-        if (isTop2) gFinalists.push({ x:x+BOX_W, y:y+ENTRY_H/2 });
+    // Group columns
+    const gFinPos=[];
+    groups.forEach((g,gi) => {
+      const x=PAD+gi*colW;
+      ctx.font=\'bold 10px IBM Plex Mono,monospace\';ctx.fillStyle=MUTED;
+      ctx.fillText(`GROUP ${g.name}`,x,16);
+      const votes=g.votes||{};
+      const sorted=[...g.pitches].sort((a,b)=>(votes[b]||0)-(votes[a]||0));
+      const maxV=Math.max(...sorted.map(p=>votes[p]||0),1);
+      const fp=[];
+      sorted.forEach((p,pi) => {
+        const y=26+pi*(ENTRY_H+GAP_Y);
+        const v=votes[p]||0;
+        const isTop=g.closed&&pi<2;
+        const isCur=s.phase===\'group\'&&s.currentGroup===gi&&!g.closed;
+        ctx.fillStyle=isTop?\'#e8f5e9\':(isCur?\'#fff8e1\':\'white\');
+        ctx.strokeStyle=isTop?\'#a5d6a7\':(isCur?GOLD:\'#ccc\');
+        ctx.lineWidth=isCur?2:1;
+        ctx.fillRect(x,y,BOX_W,ENTRY_H);ctx.strokeRect(x,y,BOX_W,ENTRY_H);
+        if(g.open||g.closed){ctx.fillStyle=isTop?\'#c8f7c5\':\'#eee\';ctx.fillRect(x+1,y+ENTRY_H-6,Math.max(0,(BOX_W-2)*v/maxV),5);}
+        ctx.font=isTop?\'bold 11px IBM Plex Sans,sans-serif\':\'11px IBM Plex Sans,sans-serif\';
+        ctx.fillStyle=isTop?GREEN:INK;
+        ctx.fillText(trunc(p,18)+(isTop?\' ✓\':\'\'\'),x+5,y+ENTRY_H*0.67);
+        if(g.open||g.closed){ctx.font=\'10px IBM Plex Mono,monospace\';ctx.fillStyle=MUTED;ctx.textAlign=\'right\';ctx.fillText(v,x+BOX_W-4,y+ENTRY_H*0.67);ctx.textAlign=\'left\';}
+        if(isTop) fp.push({x:x+BOX_W,y:y+ENTRY_H/2});
       });
-      groupFinalistPositions.push(gFinalists);
+      gFinPos.push(fp);
     });
 
-    // ── DRAW KNOCKOUT ──
-    const kStartX = groups.length*groupColW + PAD;
-    const boxMeta = {};
-
-    function drawEntry(name, x, y, isWin, isLose, isCurr) {
-      ctx.fillStyle=isWin?'#e8f5e9':isLose?'#fdecea':isCurr?'#fff8e1':'white';
-      ctx.strokeStyle=isCurr?GOLD:isWin?'#a5d6a7':isLose?'#ef9a9a':'#ccc';
-      ctx.lineWidth=isCurr?2:1;
-      ctx.fillRect(x,y,BOX_W,ENTRY_H);
-      ctx.strokeRect(x,y,BOX_W,ENTRY_H);
-      ctx.font=isWin?'bold 11px IBM Plex Sans,sans-serif':'11px IBM Plex Sans,sans-serif';
-      ctx.fillStyle=isWin?GREEN:isLose?'#bbb':INK;
-      ctx.fillText(trunc(name,18)+(isWin?' ✓':''),x+6,y+ENTRY_H*0.65);
-    }
-
-    if (knockout.length) {
-      const currentKidx = s.knockoutIndex || 0;
-      kKeys.forEach((rn, ri) => {
-        const ms = kRounds[rn];
-        const x = kStartX + ri*(BOX_W+ROUND_GAP);
-        const totalH = ms.length*(ENTRY_H*2+GAP_Y*2+4)-GAP_Y;
-        const startY = 30 + (H-60-totalH)/2;
-
-        ctx.font='bold 9px IBM Plex Mono,monospace';
-        ctx.fillStyle=MUTED;
-        ctx.fillText(rn, x, 26);
-
-        ms.forEach((m, mi) => {
-          const mIdx = knockout.indexOf(m);
-          const isCurr = mIdx===currentKidx && s.phase==='knockout';
-          const y = startY + mi*(ENTRY_H*2+GAP_Y*2+4);
-          const doneA=!!m.winner, wA=m.winner===m.a, wB=m.winner===m.b;
-          drawEntry(m.a, x, y, wA, doneA&&!wA, isCurr);
-          drawEntry(m.b, x, y+ENTRY_H+2, wB, doneA&&!wB, isCurr);
-          if (isCurr) {
-            ctx.font='bold 9px IBM Plex Mono,monospace';
-            ctx.fillStyle=GOLD;
-            ctx.fillText('▶ NOW VOTING', x, y-4);
-          }
-          boxMeta[mIdx]={x, y, mid:y+ENTRY_H+1, right:x+BOX_W, bot:y+ENTRY_H*2+2};
-
-          // Connectors to next round
-          if (ri<kKeys.length-1) {
-            const nextMs = kRounds[kKeys[ri+1]];
-            const nextM = nextMs[Math.floor(mi/2)];
-            const nextIdx = knockout.indexOf(nextM);
-            const nm = boxMeta[nextIdx];
-            if (nm) {
-              const y1 = y+ENTRY_H+1, y2 = mi%2===0?nm.y+ENTRY_H*0.5:nm.y+ENTRY_H*1.5+2;
-              const mx = x+BOX_W+(ROUND_GAP/2);
-              ctx.strokeStyle='#ccc'; ctx.lineWidth=1;
-              ctx.beginPath(); ctx.moveTo(x+BOX_W,y1); ctx.lineTo(mx,y1); ctx.lineTo(mx,y2); ctx.lineTo(x+BOX_W+ROUND_GAP,y2); ctx.stroke();
-            }
-          }
+    // Knockout columns
+    const kStartX=PAD+groups.length*colW;
+    const boxMeta={};
+    const curKidx=s.knockoutIndex||0;
+    kKeys.forEach((rn,ri) => {
+      const ms=kRounds[rn];
+      const x=kStartX+ri*colW;
+      ctx.font=\'bold 9px IBM Plex Mono,monospace\';ctx.fillStyle=MUTED;ctx.fillText(rn,x,16);
+      const totalH=ms.length*(ENTRY_H*2+GAP_Y+4)-GAP_Y;
+      const startY=26+(H-54-totalH)/2;
+      ms.forEach((m,mi) => {
+        const mIdx=km.indexOf(m);
+        const isCur=mIdx===curKidx&&s.phase===\'knockout\';
+        const y=startY+mi*(ENTRY_H*2+GAP_Y+4);
+        const wA=m.winner===m.a,wB=m.winner===m.b,done=!!m.winner;
+        [[m.a,wA,done&&!wA,y],[m.b,wB,done&&!wB,y+ENTRY_H+2]].forEach(([name,isW,isL,ey])=>{
+          ctx.fillStyle=isW?\'#e8f5e9\':(isL?\'#fdecea\':(isCur?\'#fff8e1\':\'white\'));
+          ctx.strokeStyle=isCur?GOLD:(isW?\'#a5d6a7\':(isL?\'#ef9a9a\':\'#ccc\'));
+          ctx.lineWidth=isCur?2:1;ctx.fillRect(x,ey,BOX_W,ENTRY_H);ctx.strokeRect(x,ey,BOX_W,ENTRY_H);
+          ctx.font=isW?\'bold 11px IBM Plex Sans,sans-serif\':\'11px IBM Plex Sans,sans-serif\';
+          ctx.fillStyle=isW?GREEN:(isL?\'#bbb\':\':INK\');
+          ctx.fillText(trunc(name,18)+(isW?\' ✓\':\'\'\'),x+5,ey+ENTRY_H*0.67);
         });
+        if(isCur){ctx.font=\'bold 9px IBM Plex Mono,monospace\';ctx.fillStyle=GOLD;ctx.fillText(\'▶ NOW\',x,y-4);}
+        boxMeta[mIdx]={x,y,mid:y+ENTRY_H+1,right:x+BOX_W,bot:y+ENTRY_H*2+2};
       });
+    });
 
-      // Champion
-      if (s.tournamentComplete) {
-        const lastRound = kRounds[kKeys[kKeys.length-1]];
-        const champ = lastRound && lastRound[0] && lastRound[0].winner;
-        if (champ) {
-          const x = kStartX + kKeys.length*(BOX_W+ROUND_GAP);
-          const y = H/2-ENTRY_H/2;
-          ctx.font='bold 10px IBM Plex Mono,monospace'; ctx.fillStyle=ACCENT;
-          ctx.fillText('🏆 CHAMPION', x, y-6);
-          ctx.fillStyle='#fff8e1'; ctx.strokeStyle=GOLD; ctx.lineWidth=2;
-          ctx.fillRect(x,y,BOX_W,ENTRY_H); ctx.strokeRect(x,y,BOX_W,ENTRY_H);
-          ctx.font='bold 12px Playfair Display,serif'; ctx.fillStyle=ACCENT;
-          ctx.fillText(trunc(champ,16),x+6,y+ENTRY_H*0.68);
-        }
-      }
+    // Final column
+    if(s.phase===\'final\'||s.tournamentComplete) {
+      const x=kStartX+kKeys.length*colW;
+      const candidates=s.finalCandidates||[];
+      const votes=s.finalVotes||{};
+      const sorted=[...candidates].sort((a,b)=>(votes[b]||0)-(votes[a]||0));
+      const maxV=Math.max(...candidates.map(c=>votes[c]||0),1);
+      ctx.font=\'bold 10px IBM Plex Mono,monospace\';ctx.fillStyle=ACCENT;ctx.fillText(\'THE FINAL\',x,16);
+      const totalH=sorted.length*(ENTRY_H+GAP_Y)-GAP_Y;
+      const startY=26+(H-54-totalH)/2;
+      sorted.forEach((p,pi) => {
+        const y=startY+pi*(ENTRY_H+GAP_Y);
+        const v=votes[p]||0;
+        const isWin=s.finalClosed&&pi===0;
+        ctx.fillStyle=isWin?\'#fff8e1\':\'white\';
+        ctx.strokeStyle=isWin?GOLD:\'#ccc\';ctx.lineWidth=isWin?2.5:1;
+        ctx.fillRect(x,y,BOX_W,ENTRY_H);ctx.strokeRect(x,y,BOX_W,ENTRY_H);
+        if(s.finalOpen||s.finalClosed){ctx.fillStyle=isWin?\'#fff3cd\':\'#eee\';ctx.fillRect(x+1,y+ENTRY_H-6,Math.max(0,(BOX_W-2)*v/Math.max(maxV,1)),5);}
+        ctx.font=isWin?\'bold 11px IBM Plex Sans,sans-serif\':\'11px IBM Plex Sans,sans-serif\';
+        ctx.fillStyle=isWin?ACCENT:INK;
+        ctx.fillText(trunc(p,18)+(isWin?\' 🏆\':\'\'\'),x+5,y+ENTRY_H*0.67);
+        if(s.finalOpen||s.finalClosed){ctx.font=\'10px IBM Plex Mono,monospace\';ctx.fillStyle=MUTED;ctx.textAlign=\'right\';ctx.fillText(v,x+BOX_W-4,y+ENTRY_H*0.67);ctx.textAlign=\'left\';}
+      });
+    }
 
-      // Connector lines from groups to first knockout round
-      if (groups.length && kKeys.length) {
-        const firstKx = kStartX;
-        const firstMs = kRounds[kKeys[0]];
-        firstMs.forEach((m, mi) => {
-          const targetY = 30 + (H-60-(firstMs.length*(ENTRY_H*2+GAP_Y*2+4)-GAP_Y))/2 + mi*(ENTRY_H*2+GAP_Y*2+4);
-          const entryYA = targetY + ENTRY_H*0.5;
-          const entryYB = targetY + ENTRY_H*1.5 + 2;
+    // Connector: groups → first knockout round
+    if(kKeys.length&&gFinPos.length) {
+      const firstMs=kRounds[kKeys[0]];
+      const firstX=kStartX;
+      const totalH=firstMs.length*(ENTRY_H*2+GAP_Y+4)-GAP_Y;
+      const startY=26+(H-54-totalH)/2;
+      gFinPos.forEach((fp,gi) => {
+        const targetM=firstMs[gi];
+        if(!targetM) return;
+        const ty=startY+gi*(ENTRY_H*2+GAP_Y+4);
+        ctx.strokeStyle=\'#ddd\';ctx.lineWidth=1;
+        if(fp[0]){const mx=fp[0].x+(firstX-fp[0].x)/2;ctx.beginPath();ctx.moveTo(fp[0].x,fp[0].y);ctx.lineTo(mx,fp[0].y);ctx.lineTo(mx,ty+ENTRY_H*0.5);ctx.lineTo(firstX,ty+ENTRY_H*0.5);ctx.stroke();}
+        if(fp[1]){const mx=fp[1].x+(firstX-fp[1].x)/2;ctx.beginPath();ctx.moveTo(fp[1].x,fp[1].y);ctx.lineTo(mx,fp[1].y);ctx.lineTo(mx,ty+ENTRY_H*1.5+2);ctx.lineTo(firstX,ty+ENTRY_H*1.5+2);ctx.stroke();}
+      });
+    }
 
-          // Find which group finalist corresponds
-          const allFinalists = groupFinalistPositions.flat();
-          const fA = allFinalists.find(f => {
-            const gIdx = Math.floor(groupFinalistPositions.indexOf(groupFinalistPositions.find(gfp=>gfp.includes(f))));
-            return true;
-          });
+    // Connector: knockout rounds
+    for(let ri=0;ri<kKeys.length-1;ri++){
+      const thisMs=kRounds[kKeys[ri]];
+      const nextMs=kRounds[kKeys[ri+1]];
+      const x1=kStartX+ri*colW+BOX_W;
+      const x2=kStartX+(ri+1)*colW;
+      const totalH1=thisMs.length*(ENTRY_H*2+GAP_Y+4)-GAP_Y;
+      const startY1=26+(H-54-totalH1)/2;
+      const totalH2=nextMs.length*(ENTRY_H*2+GAP_Y+4)-GAP_Y;
+      const startY2=26+(H-54-totalH2)/2;
+      thisMs.forEach((m,mi) => {
+        const y1=startY1+mi*(ENTRY_H*2+GAP_Y+4)+ENTRY_H+1;
+        const nextM=nextMs[Math.floor(mi/2)];
+        if(!nextM) return;
+        const nmi=nextMs.indexOf(nextM);
+        const y2=startY2+nmi*(ENTRY_H*2+GAP_Y+4)+(mi%2===0?ENTRY_H*0.5:ENTRY_H*1.5+2);
+        const mx=x1+(x2-x1)/2;
+        ctx.strokeStyle=\'#ccc\';ctx.lineWidth=1;
+        ctx.beginPath();ctx.moveTo(x1,y1);ctx.lineTo(mx,y1);ctx.lineTo(mx,y2);ctx.lineTo(x2,y2);ctx.stroke();
+      });
+    }
 
-          // Simple: draw lines from each group's finalist positions
-          ctx.strokeStyle='#ddd'; ctx.lineWidth=1;
-          if (mi < groupFinalistPositions.length) {
-            const gfp = groupFinalistPositions[mi];
-            if (gfp && gfp[0]) {
-              const mx = gfp[0].x + (firstKx-gfp[0].x)/2;
-              ctx.beginPath(); ctx.moveTo(gfp[0].x,gfp[0].y); ctx.lineTo(mx,gfp[0].y); ctx.lineTo(mx,entryYA); ctx.lineTo(firstKx,entryYA); ctx.stroke();
-            }
-            if (gfp && gfp[1]) {
-              const mx = gfp[1].x + (firstKx-gfp[1].x)/2;
-              ctx.beginPath(); ctx.moveTo(gfp[1].x,gfp[1].y); ctx.lineTo(mx,gfp[1].y); ctx.lineTo(mx,entryYB); ctx.lineTo(firstKx,entryYB); ctx.stroke();
-            }
-          }
-        });
-      }
+    // Connector: last knockout round → final
+    if((s.phase===\'final\'||s.tournamentComplete)&&kKeys.length) {
+      const lastMs=kRounds[kKeys[kKeys.length-1]];
+      const x1=kStartX+(kKeys.length-1)*colW+BOX_W;
+      const x2=kStartX+kKeys.length*colW;
+      const candidates=s.finalCandidates||[];
+      const totalHF=candidates.length*(ENTRY_H+GAP_Y)-GAP_Y;
+      const startYF=26+(H-54-totalHF)/2;
+      const totalH=lastMs.length*(ENTRY_H*2+GAP_Y+4)-GAP_Y;
+      const startY=26+(H-54-totalH)/2;
+      lastMs.forEach((m,mi) => {
+        const y1=startY+mi*(ENTRY_H*2+GAP_Y+4)+ENTRY_H+1;
+        const y2=startYF+mi*(ENTRY_H+GAP_Y)+ENTRY_H*0.5;
+        const mx=x1+(x2-x1)/2;
+        ctx.strokeStyle=\'#ddd\';ctx.lineWidth=1;
+        ctx.beginPath();ctx.moveTo(x1,y1);ctx.lineTo(mx,y1);ctx.lineTo(mx,y2);ctx.lineTo(x2,y2);ctx.stroke();
+      });
     }
   }
 
-  function groupByRound(matchups) {
-    const r={};
-    matchups.forEach(m=>{(r[m.round]||(r[m.round]=[])).push(m);});
-    return r;
-  }
-  function trunc(s,n){return s.length>n?s.slice(0,n)+'…':s;}
+  function groupByRound(ms){const r={};ms.forEach(m=>{(r[m.round]||(r[m.round]=[])).push(m);});return r;}
+  function trunc(s,n){return s.length>n?s.slice(0,n)+\'…\'\':s;}
 
   // ── RESULTS ──
   function renderResults(s) {
-    showScreen('results-screen');
-    const el=document.getElementById('results-content');
-    const km=s.knockoutMatchups||[];
-    const lastRound=km.filter(m=>m.winner);
-    const champ=lastRound.length?lastRound[lastRound.length-1].winner:'—';
-
-    // Build finalists summary
+    showScreen(\'results-screen\');
+    const el=document.getElementById(\'results-content\');
+    const champ=s.finalWinner||\'—\';
     const finalists=s.knockoutFinalists||[];
+    const km=s.knockoutMatchups||[];
     el.innerHTML=`
       <div class="results-eyebrow">The People Have Spoken</div>
       <div class="winner-headline">The Current Will Report</div>
       <div class="winner-name">${champ}</div>
       <table class="results-table">
-        <thead><tr><th>Pitch</th><th>Stage</th><th>Result</th></tr></thead>
+        <thead><tr><th>Pitch</th><th>Reached</th><th>Result</th></tr></thead>
         <tbody>
           ${finalists.map(f=>{
-            const wins=km.filter(m=>m.winner===f).length;
             const isChamp=f===champ;
-            return `<tr${isChamp?' class="top"':''}><td>${f}</td><td>Finalist</td><td>${isChamp?'🏆 Champion':wins+' win'+( wins!==1?'s':'')}</td></tr>`;
-          }).join('')}
-        </tbody>
+            const isFinal=(s.finalCandidates||[]).includes(f);
+            return `<tr${isChamp?\' class=\"top\"\':\'\'}>
+              <td>${f}</td><td>${isFinal?\'Final\':\'Semifinal\'}</td>
+              <td>${isChamp?\'🏆 Champion\':(isFinal?\'Runner-up\':\'Eliminated\')}</td></tr>`;
+          }).join(\'\')}</tbody>
       </table>`;
   }
 
-  // ── QR + URL ──
+  // ── QR ──
   function updateVoterURL() {
-    const base=window.location.href.replace('index.html','').replace(/\/$/,'');
-    const url=base+'/vote.html';
-    const el=document.getElementById('voter-url');
-    if (el) el.textContent=url;
+    const base=window.location.href.replace(\'index.html\'\',\'\').replace(/\/$/,\'\');
+    const url=base+\'/vote.html\';
+    const el=document.getElementById(\'voter-url\');
+    if(el) el.textContent=url;
     generateQR(url);
   }
-
   function generateQR(url) {
-    const container=document.getElementById('qr-container');
-    if (!container) return;
-    container.innerHTML='';
-    const load=()=>new QRCode(container,{text:url,width:150,height:150,colorDark:'#1a1208',colorLight:'#f5f0e8',correctLevel:QRCode.CorrectLevel.M});
-    if (window.QRCode) load();
-    else {
-      const s=document.createElement('script');
-      s.src='https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js';
-      s.onload=load;
-      document.head.appendChild(s);
-    }
+    const c=document.getElementById(\'qr-container\');
+    if(!c) return; c.innerHTML=\'\';
+    const load=()=>new QRCode(c,{text:url,width:150,height:150,colorDark:\'#1a1208\',colorLight:\'#f5f0e8\',correctLevel:QRCode.CorrectLevel.M});
+    if(window.QRCode) load();
+    else{const s=document.createElement(\'script\');s.src=\'https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js\';s.onload=load;document.head.appendChild(s);}
   }
 
   window.resetTournament = async function() {
-    if (!confirm('Reset everything? This cannot be undone.')) return;
-    if (timerInterval) clearInterval(timerInterval);
-    await set(ref(db,'tournament'),null);
-    await set(ref(db,'votes'),null);
-    showScreen('setup-screen');
+    if(!confirm(\'Reset everything?\')) return;
+    if(timerInterval) clearInterval(timerInterval);
+    await set(ref(db,\'tournament\'),null);
+    await set(ref(db,\'votes\'),null);
+    showScreen(\'setup-screen\');
     renderSetup();
   };
 
-  // ── INIT ──
-  get(ref(db,'tournament')).then(snap=>{
+  get(ref(db,\'tournament\')).then(snap=>{
     const s=snap.val();
-    if (s&&s.tournamentStarted&&!s.tournamentComplete) {
-      showScreen('host-screen'); subscribeState(); updateVoterURL();
-    } else if (s&&s.tournamentComplete) {
-      renderResults(s);
-    } else {
-      showScreen('setup-screen'); renderSetup();
-    }
+    if(s&&s.tournamentStarted&&!s.tournamentComplete){showScreen(\'host-screen\');subscribeState();updateVoterURL();}
+    else if(s&&s.tournamentComplete){lastState=s;renderResults(s);}
+    else{showScreen(\'setup-screen\');renderSetup();}
   });
-
-  window.addEventListener('resize',()=>{ if(lastState&&bracketVisible) drawBracket(lastState); });
+  window.addEventListener(\'resize\',()=>{if(lastState&&bracketVisible) drawBracket(lastState);});
 </script>
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700;900&family=IBM+Plex+Mono:wght@400;500;700&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap');
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;700&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap');
   :root{--ink:#1a1208;--paper:#f5f0e8;--accent:#c8392b;--gold:#d4a017;--muted:#6b5f4a;}
   *{box-sizing:border-box;margin:0;padding:0;}
   body{font-family:'IBM Plex Sans',sans-serif;background:var(--paper);color:var(--ink);min-height:100vh;}
   .screen{display:none;}.screen.active{display:block;}
 
-  .masthead{border-bottom:3px double var(--ink);padding:14px 24px 10px;text-align:center;background:var(--paper);}
-  .masthead-eyebrow{font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:3px;text-transform:uppercase;color:var(--muted);margin-bottom:3px;}
-  .masthead h1{font-family:'Playfair Display',serif;font-size:clamp(24px,4vw,44px);font-weight:900;line-height:1;letter-spacing:-1px;}
-  .masthead h1 span{color:var(--accent);}
-  .masthead-sub{font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:2px;text-transform:uppercase;color:var(--muted);margin-top:5px;border-top:1px solid var(--ink);padding-top:5px;}
+  .masthead{border-bottom:3px double var(--ink);padding:12px 24px 10px;text-align:center;background:var(--paper);}
+  .masthead-eyebrow{font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:3px;text-transform:uppercase;color:var(--muted);margin-bottom:6px;}
+  .masthead-logo{height:40px;width:auto;display:block;margin:0 auto;filter:invert(0);}
+  .masthead-sub{font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:2px;text-transform:uppercase;color:var(--muted);margin-top:6px;border-top:1px solid var(--ink);padding-top:5px;}
 
   .btn{font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:700;letter-spacing:1px;text-transform:uppercase;border:2px solid var(--ink);padding:10px 22px;cursor:pointer;background:var(--ink);color:var(--paper);transition:all .15s;}
   .btn:hover{background:var(--accent);border-color:var(--accent);}
   .btn.secondary{background:transparent;color:var(--ink);}
   .btn.secondary:hover{background:var(--ink);color:var(--paper);}
   .btn.danger{background:var(--accent);border-color:var(--accent);}
-  .btn.danger:hover{background:#a93226;border-color:#a93226;}
   .btn-row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;}
 
   /* SETUP */
   .setup-body{max-width:1100px;margin:0 auto;padding:24px;}
-  .setup-headline{font-family:'Playfair Display',serif;font-size:26px;font-weight:700;margin-bottom:6px;}
-  .setup-deck{font-size:13px;color:var(--muted);margin-bottom:20px;font-family:'IBM Plex Mono',monospace;}
-  .setup-status{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--accent);margin-bottom:16px;}
-
+  .setup-headline{font-family:'IBM Plex Mono',monospace;font-size:13px;font-weight:700;letter-spacing:2px;text-transform:uppercase;margin-bottom:6px;}
+  .setup-deck{font-size:13px;color:var(--muted);margin-bottom:12px;font-family:'IBM Plex Mono',monospace;}
+  .setup-status{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--accent);margin-bottom:16px;min-height:16px;}
   .unassigned-label{font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:2px;text-transform:uppercase;color:var(--muted);margin-bottom:8px;}
   #unassigned-pool{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:20px;padding:14px;border:1px dashed #ccc;background:white;min-height:48px;}
-  .pitch-chip{display:flex;align-items:center;gap:6px;border:1px solid var(--ink);padding:5px 10px;background:var(--paper);font-family:'IBM Plex Sans',sans-serif;font-size:13px;}
-  .pitch-chip select{cursor:pointer;}
-
+  .pitch-chip{display:flex;align-items:center;gap:6px;border:1px solid var(--ink);padding:5px 10px;background:var(--paper);font-size:13px;}
+  .pitch-chip select{font-family:'IBM Plex Mono',monospace;font-size:9px;border:none;background:transparent;cursor:pointer;color:var(--muted);}
   .groups-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:20px;}
   .group-box{border:2px solid var(--ink);background:white;padding:14px;}
   .group-box-title{font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:700;letter-spacing:2px;text-transform:uppercase;margin-bottom:4px;}
   .group-box-count{font-family:'IBM Plex Mono',monospace;font-size:9px;color:var(--muted);margin-bottom:10px;}
-  .group-item{display:flex;justify-content:space-between;align-items:center;font-size:13px;padding:4px 0;border-bottom:1px solid #eee;}
+  .group-item{display:flex;justify-content:space-between;align-items:center;font-size:13px;padding:5px 0;border-bottom:1px solid #eee;}
   .group-item:last-child{border-bottom:none;}
-
+  .group-item button{border:none;background:none;cursor:pointer;color:#bbb;font-size:16px;}
   .add-pitch-row{display:flex;gap:8px;margin-bottom:20px;}
   .add-pitch-input{font-family:'IBM Plex Sans',sans-serif;font-size:14px;border:2px solid var(--ink);padding:9px 14px;flex:1;outline:none;background:white;}
   .add-pitch-input::placeholder{color:#bbb;}
@@ -810,68 +707,61 @@
   /* HOST */
   .host-toolbar{display:flex;align-items:center;gap:10px;padding:10px 20px;border-bottom:1px solid #ddd;background:var(--paper);flex-wrap:wrap;}
   .host-toolbar-title{font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:2px;text-transform:uppercase;color:var(--muted);flex:1;}
-
   #controls-view{max-width:1100px;margin:0 auto;padding:16px 20px;}
-  .controls-grid{display:grid;grid-template-columns:1fr 300px;gap:20px;align-items:start;}
-
+  .controls-grid{display:grid;grid-template-columns:1fr 290px;gap:20px;align-items:start;}
   .matchup-card{border:3px solid var(--ink);background:white;padding:20px;}
   .matchup-label{font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:3px;text-transform:uppercase;color:var(--muted);margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;}
   .phase-badge{background:var(--ink);color:var(--paper);font-family:'IBM Plex Mono',monospace;font-size:9px;padding:3px 7px;letter-spacing:1px;}
-
   .timer-block{text-align:center;margin-bottom:16px;}
-  .timer-display{font-family:'IBM Plex Mono',monospace;font-size:56px;font-weight:700;line-height:1;color:var(--ink);transition:color .3s;}
+  .timer-display{font-family:'IBM Plex Mono',monospace;font-size:52px;font-weight:700;line-height:1;color:var(--ink);transition:color .3s;}
   .timer-display.urgent{color:var(--accent);animation:pulse .5s infinite alternate;}
   @keyframes pulse{from{opacity:1}to{opacity:.5}}
   .timer-label{font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:3px;text-transform:uppercase;color:var(--muted);}
   .timer-bar-wrap{height:5px;background:#ddd;margin:10px 0 16px;}
   .timer-bar{height:100%;background:var(--accent);transition:width 1s linear;}
 
-  /* GROUP PITCH ROWS */
-  .group-pitch-row{display:grid;grid-template-columns:24px 1fr 120px 40px;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid #f0ece4;position:relative;}
-  .group-pitch-row.advancing{background:#f0fdf4;border-radius:2px;padding:6px 4px;}
-  .group-pitch-rank{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--muted);text-align:center;}
-  .group-pitch-name{font-family:'Playfair Display',serif;font-size:14px;font-weight:700;line-height:1.2;}
-  .group-pitch-bar-wrap{height:8px;background:#eee;}
-  .group-pitch-bar{height:100%;background:var(--accent);transition:width .5s ease;}
-  .group-pitch-row.advancing .group-pitch-bar{background:#4caf50;}
-  .group-pitch-votes{font-family:'IBM Plex Mono',monospace;font-size:13px;font-weight:700;color:var(--accent);text-align:right;}
-  .advancing-badge{position:absolute;right:-60px;font-family:'IBM Plex Mono',monospace;font-size:8px;background:#4caf50;color:white;padding:2px 5px;letter-spacing:1px;}
+  /* GROUP ROWS */
+  .grow{display:grid;grid-template-columns:24px 1fr 100px 36px;gap:8px;align-items:center;padding:6px 4px;border-bottom:1px solid #f0ece4;position:relative;}
+  .grow.adv{background:#f0fdf4;border-radius:2px;}
+  .grow-rank{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--muted);text-align:center;}
+  .grow-name{font-family:'IBM Plex Sans',sans-serif;font-size:14px;font-weight:600;line-height:1.2;}
+  .grow-bar-wrap{height:8px;background:#eee;}
+  .grow-bar{height:100%;background:var(--accent);transition:width .5s ease;}
+  .grow.adv .grow-bar{background:#4caf50;}
+  .grow-votes{font-family:'IBM Plex Mono',monospace;font-size:13px;font-weight:700;color:var(--accent);text-align:right;}
+  .adv-badge{position:absolute;right:-68px;font-family:'IBM Plex Mono',monospace;font-size:8px;background:#4caf50;color:white;padding:2px 5px;letter-spacing:1px;white-space:nowrap;}
+
+  /* KNOCKOUT VS */
+  .versus-row{display:grid;grid-template-columns:1fr 36px 1fr;gap:8px;align-items:center;margin-bottom:12px;}
+  .competitor{border:2px solid var(--ink);padding:12px;text-align:center;transition:background .3s;}
+  .competitor.leading{background:#fff8e1;border-color:var(--gold);}
+  .competitor-name{font-family:'IBM Plex Sans',sans-serif;font-size:14px;font-weight:700;line-height:1.3;margin-bottom:6px;}
+  .competitor-votes{font-family:'IBM Plex Mono',monospace;font-size:24px;font-weight:700;color:var(--accent);}
+  .vote-bar-wrap{height:8px;background:#eee;margin-top:6px;}
+  .vote-bar{height:100%;background:var(--accent);transition:width .4s ease;}
+  .competitor-pct{font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--muted);margin-top:3px;}
+  .vs-label{font-family:'IBM Plex Sans',sans-serif;font-size:18px;font-weight:900;text-align:center;color:var(--muted);}
 
   .vote-total{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--muted);text-align:center;margin:12px 0;}
   .matchup-result{font-family:'IBM Plex Mono',monospace;font-size:11px;color:#2e7d32;text-align:center;margin-bottom:12px;display:none;padding:6px;background:#e8f5e9;}
   .host-controls{display:flex;gap:8px;flex-wrap:wrap;justify-content:center;}
 
-  /* KNOCKOUT VS ROW */
-  .versus-row{display:grid;grid-template-columns:1fr 36px 1fr;gap:8px;align-items:center;margin-bottom:12px;}
-  .competitor{border:2px solid var(--ink);padding:12px;text-align:center;transition:background .3s;}
-  .competitor.leading{background:#fff8e1;border-color:var(--gold);}
-  .competitor-name{font-family:'Playfair Display',serif;font-size:14px;font-weight:700;line-height:1.3;margin-bottom:6px;}
-  .competitor-votes{font-family:'IBM Plex Mono',monospace;font-size:24px;font-weight:700;color:var(--accent);}
-  .vote-bar-wrap{height:8px;background:#eee;margin-top:6px;}
-  .vote-bar{height:100%;background:var(--accent);transition:width .4s ease;}
-  .competitor-pct{font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--muted);margin-top:3px;}
-  .vs-label{font-family:'Playfair Display',serif;font-size:18px;font-weight:900;text-align:center;color:var(--muted);}
-
-  /* RIGHT PANEL */
   .right-col{display:flex;flex-direction:column;gap:14px;}
   .join-panel{border:1px solid #ccc;padding:14px;background:white;}
   .join-headline{font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:2px;text-transform:uppercase;color:var(--muted);margin-bottom:8px;}
   .join-url{font-family:'IBM Plex Mono',monospace;font-size:10px;background:var(--ink);color:var(--paper);padding:7px 10px;word-break:break-all;}
 
-  /* BRACKET VIEW */
   #bracket-view{display:none;min-height:calc(100vh - 120px);overflow:auto;background:#faf7f0;padding:20px;}
   #bracket-canvas{display:block;}
 
-  /* RESULTS */
   .results-body{max-width:680px;margin:0 auto;padding:32px 24px;text-align:center;}
   .results-eyebrow{font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:3px;text-transform:uppercase;color:var(--muted);}
-  .winner-headline{font-family:'Playfair Display',serif;font-size:clamp(22px,4vw,36px);font-weight:900;margin:20px 0 8px;line-height:1.2;}
-  .winner-name{font-family:'Playfair Display',serif;font-size:clamp(18px,3vw,28px);font-weight:700;color:var(--accent);margin-bottom:24px;padding:14px 20px;border:3px double var(--accent);display:inline-block;}
+  .winner-headline{font-family:'IBM Plex Sans',sans-serif;font-size:clamp(20px,4vw,34px);font-weight:700;margin:20px 0 8px;line-height:1.2;}
+  .winner-name{font-family:'IBM Plex Sans',sans-serif;font-size:clamp(18px,3vw,28px);font-weight:700;color:var(--accent);margin-bottom:24px;padding:14px 20px;border:3px double var(--accent);display:inline-block;}
   .results-table{width:100%;border-collapse:collapse;margin:20px 0;text-align:left;}
   .results-table th{font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:2px;text-transform:uppercase;border-bottom:2px solid var(--ink);padding:7px 10px;}
   .results-table td{font-family:'IBM Plex Sans',sans-serif;font-size:13px;padding:7px 10px;border-bottom:1px solid #ddd;}
   .results-table tr.top td{font-weight:700;color:var(--accent);}
-
   @media(max-width:800px){.controls-grid{grid-template-columns:1fr;}.groups-grid{grid-template-columns:1fr;}}
 </style>
 </head>
@@ -880,42 +770,25 @@
 <!-- SETUP -->
 <div id="setup-screen" class="screen active">
   <div class="masthead">
-    <div class="masthead-eyebrow">Lafayette's Independent News Source</div>
-    <h1>The <span>Current</span></h1>
+    <div class="masthead-eyebrow">Community Pitch Party</div>
+    <img class="masthead-logo" src="data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/4gHYSUNDX1BST0ZJTEUAAQEAAAHIAAAAAAQwAABtbnRyUkdCIFhZWiAH4AABAAEAAAAAAABhY3NwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAA9tYAAQAAAADTLQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAlkZXNjAAAA8AAAACRyWFlaAAABFAAAABRnWFlaAAABKAAAABRiWFlaAAABPAAAABR3dHB0AAABUAAAABRyVFJDAAABZAAAAChnVFJDAAABZAAAAChiVFJDAAABZAAAAChjcHJ0AAABjAAAADxtbHVjAAAAAAAAAAEAAAAMZW5VUwAAAAgAAAAcAHMAUgBHAEJYWVogAAAAAAAAb6IAADj1AAADkFhZWiAAAAAAAABimQAAt4UAABjaWFlaIAAAAAAAACSgAAAPhAAAts9YWVogAAAAAAAA9tYAAQAAAADTLXBhcmEAAAAAAAQAAAACZmYAAPKnAAANWQAAE9AAAApbAAAAAAAAAABtbHVjAAAAAAAAAAEAAAAMZW5VUwAAACAAAAAcAEcAbwBvAGcAbABlACAASQBuAGMALgAgADIAMAAxADb/2wBDAAUDBAQEAwUEBAQFBQUGBwwIBwcHBw8LCwkMEQ8SEhEPERETFhwXExQaFRERGCEYGh0dHx8fExciJCIeJBweHx7/2wBDAQUFBQcGBw4ICA4eFBEUHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh7/wAARCALCB9ADASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAj/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFAEBAAAAAAAAAAAAAAAAAAAAAP/EABQRAQAAAAAAAAAAAAAAAAAAAAD/2gAMAwEAAhEDEQA/AIyAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB//Z" alt="The Current">
     <div class="masthead-sub">Host Setup — Group Stage</div>
   </div>
   <div class="setup-body">
     <div class="setup-headline">Assign Pitches to Groups</div>
-    <div class="setup-deck">Drag each pitch into a group using the dropdown, or auto-assign randomly.</div>
+    <div class="setup-deck">Use the dropdown on each pitch to assign it, or click Auto-Assign.</div>
     <div class="setup-status" id="setup-status"></div>
-
     <div class="unassigned-label">Unassigned Pitches</div>
     <div id="unassigned-pool"></div>
-
     <div class="groups-grid">
-      <div class="group-box">
-        <div class="group-box-title">Group A</div>
-        <div class="group-box-count" id="group-0-count">0 pitches</div>
-        <div id="group-0-list"></div>
-      </div>
-      <div class="group-box">
-        <div class="group-box-title">Group B</div>
-        <div class="group-box-count" id="group-1-count">0 pitches</div>
-        <div id="group-1-list"></div>
-      </div>
-      <div class="group-box">
-        <div class="group-box-title">Group C</div>
-        <div class="group-box-count" id="group-2-count">0 pitches</div>
-        <div id="group-2-list"></div>
-      </div>
+      <div class="group-box"><div class="group-box-title">Group A</div><div class="group-box-count" id="group-0-count">0 pitches</div><div id="group-0-list"></div></div>
+      <div class="group-box"><div class="group-box-title">Group B</div><div class="group-box-count" id="group-1-count">0 pitches</div><div id="group-1-list"></div></div>
+      <div class="group-box"><div class="group-box-title">Group C</div><div class="group-box-count" id="group-2-count">0 pitches</div><div id="group-2-list"></div></div>
     </div>
-
     <div class="add-pitch-row">
-      <input class="add-pitch-input" id="new-pitch-input" type="text"
-        placeholder="Add a late pitch…" onkeydown="addOnEnter(event)">
+      <input class="add-pitch-input" id="new-pitch-input" type="text" placeholder="Add a late pitch…" onkeydown="addOnEnter(event)">
       <button class="btn secondary" onclick="addNewPitch()">+ Add</button>
     </div>
-
     <div class="btn-row">
       <button class="btn" onclick="startTournament()">▶ Begin Tournament</button>
       <button class="btn secondary" onclick="autoAssign()">🎲 Auto-Assign</button>
@@ -926,16 +799,15 @@
 <!-- HOST -->
 <div id="host-screen" class="screen">
   <div class="masthead">
-    <div class="masthead-eyebrow">Lafayette's Independent News Source — Host View</div>
-    <h1>The <span>Current</span></h1>
+    <div class="masthead-eyebrow">Host View</div>
+    <img class="masthead-logo" src="data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/4gHYSUNDX1BST0ZJTEUAAQEAAAHIAAAAAAQwAABtbnRyUkdCIFhZWiAH4AABAAEAAAAAAABhY3NwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAA9tYAAQAAAADTLQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAlkZXNjAAAA8AAAACRyWFlaAAABFAAAABRnWFlaAAABKAAAABRiWFlaAAABPAAAABR3dHB0AAABUAAAABRyVFJDAAABZAAAAChnVFJDAAABZAAAAChiVFJDAAABZAAAAChjcHJ0AAABjAAAADxtbHVjAAAAAAAAAAEAAAAMZW5VUwAAAAgAAAAcAHMAUgBHAEJYWVogAAAAAAAAb6IAADj1AAADkFhZWiAAAAAAAABimQAAt4UAABjaWFlaIAAAAAAAACSgAAAPhAAAts9YWVogAAAAAAAA9tYAAQAAAADTLXBhcmEAAAAAAAQAAAACZmYAAPKnAAANWQAAE9AAAApbAAAAAAAAAABtbHVjAAAAAAAAAAEAAAAMZW5VUwAAACAAAAAcAEcAbwBvAGcAbABlACAASQBuAGMALgAgADIAMAAxADb/2wBDAAUDBAQEAwUEBAQFBQUGBwwIBwcHBw8LCwkMEQ8SEhEPERETFhwXExQaFRERGCEYGh0dHx8fExciJCIeJBweHx7/2wBDAQUFBQcGBw4ICA4eFBEUHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh7/wAARCALCB9ADASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAj/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFAEBAAAAAAAAAAAAAAAAAAAAAP/EABQRAQAAAAAAAAAAAAAAAAAAAAD/2gAMAwEAAhEDEQA/AIyAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB//Z" alt="The Current">
     <div class="masthead-sub" id="host-round-label">Tournament</div>
   </div>
   <div class="host-toolbar">
     <span class="host-toolbar-title">Host Controls</span>
-    <button class="btn" style="font-size:11px;padding:8px 16px;" onclick="showBracket()">📊 View Bracket</button>
+    <button class="btn" style="font-size:11px;padding:8px 16px;" onclick="showBracket()">📊 Bracket</button>
     <button class="btn secondary" onclick="resetTournament()" style="font-size:10px;padding:7px 14px;border-color:#bbb;color:#999;">Reset</button>
   </div>
-
   <div id="controls-view">
     <div class="controls-grid">
       <div>
@@ -949,7 +821,7 @@
             <div class="timer-label">seconds remaining</div>
             <div class="timer-bar-wrap"><div class="timer-bar" id="timer-bar" style="width:100%"></div></div>
           </div>
-          <div id="group-pitches"></div>
+          <div id="main-content"></div>
           <div class="vote-total" id="vote-total">—</div>
           <div class="matchup-result" id="matchup-result"></div>
           <div class="host-controls">
@@ -969,11 +841,10 @@
       </div>
     </div>
   </div>
-
   <div id="bracket-view">
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;">
-      <button class="btn secondary" onclick="showControls()" style="font-size:11px;padding:8px 16px;">← Back to Controls</button>
-      <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:2px;text-transform:uppercase;color:var(--muted);">Full Tournament Bracket — scroll to explore</span>
+      <button class="btn secondary" onclick="showControls()" style="font-size:11px;padding:8px 16px;">← Controls</button>
+      <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:2px;text-transform:uppercase;color:var(--muted);">Full Bracket — scroll to explore</span>
     </div>
     <canvas id="bracket-canvas"></canvas>
   </div>
@@ -982,9 +853,9 @@
 <!-- RESULTS -->
 <div id="results-screen" class="screen">
   <div class="masthead">
-    <div class="masthead-eyebrow">Lafayette's Independent News Source</div>
-    <h1>The <span>Current</span></h1>
-    <div class="masthead-sub">Tournament Results</div>
+    <div class="masthead-eyebrow">Tournament Results</div>
+    <img class="masthead-logo" src="data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/4gHYSUNDX1BST0ZJTEUAAQEAAAHIAAAAAAQwAABtbnRyUkdCIFhZWiAH4AABAAEAAAAAAABhY3NwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAA9tYAAQAAAADTLQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAlkZXNjAAAA8AAAACRyWFlaAAABFAAAABRnWFlaAAABKAAAABRiWFlaAAABPAAAABR3dHB0AAABUAAAABRyVFJDAAABZAAAAChnVFJDAAABZAAAAChiVFJDAAABZAAAAChjcHJ0AAABjAAAADxtbHVjAAAAAAAAAAEAAAAMZW5VUwAAAAgAAAAcAHMAUgBHAEJYWVogAAAAAAAAb6IAADj1AAADkFhZWiAAAAAAAABimQAAt4UAABjaWFlaIAAAAAAAACSgAAAPhAAAts9YWVogAAAAAAAA9tYAAQAAAADTLXBhcmEAAAAAAAQAAAACZmYAAPKnAAANWQAAE9AAAApbAAAAAAAAAABtbHVjAAAAAAAAAAEAAAAMZW5VUwAAACAAAAAcAEcAbwBvAGcAbABlACAASQBuAGMALgAgADIAMAAxADb/2wBDAAUDBAQEAwUEBAQFBQUGBwwIBwcHBw8LCwkMEQ8SEhEPERETFhwXExQaFRERGCEYGh0dHx8fExciJCIeJBweHx7/2wBDAQUFBQcGBw4ICA4eFBEUHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh7/wAARCALCB9ADASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAj/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFAEBAAAAAAAAAAAAAAAAAAAAAP/EABQRAQAAAAAAAAAAAAAAAAAAAAD/2gAMAwEAAhEDEQA/AIyAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB//Z" alt="The Current">
+    <div class="masthead-sub">Pitch Party</div>
   </div>
   <div class="results-body">
     <div id="results-content"></div>
@@ -993,6 +864,5 @@
     </div>
   </div>
 </div>
-
 </body>
 </html>
