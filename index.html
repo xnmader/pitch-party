@@ -48,45 +48,51 @@
   function renderSetup() {
     const pool = document.getElementById('unassigned-pool');
     pool.innerHTML = '';
-    unassigned.forEach((p, i) => {
+    unassigned.forEach((p) => {
       const chip = document.createElement('div');
       chip.className = 'pitch-chip';
-      chip.innerHTML = `<span>${p}</span>
-        <select onchange="assignPitch(${i}, this.value); this.value=\'\'">
-          <option value="">→ Group</option>
-          <option value="0">Group A</option>
-          <option value="1">Group B</option>
-          <option value="2">Group C</option>
-        </select>`;
+      const safeN = p.replace(/'/g, "&#39;");
+      chip.innerHTML = '<span>' + p + '</span>' +
+        '<select onchange="assignPitchByName(this.dataset.name, this.value); this.value=\'\'" data-name="' + safeN + '">' +
+        '<option value="">→ Group</option>' +
+        '<option value="0">Group A</option>' +
+        '<option value="1">Group B</option>' +
+        '<option value="2">Group C</option>' +
+        '</select>';
       pool.appendChild(chip);
     });
     [0,1,2].forEach(g => {
-      const list = document.getElementById(`group-${g}-list`);
+      const list = document.getElementById('group-' + g + '-list');
       list.innerHTML = '';
-      setupGroups[g].forEach((p, i) => {
+      setupGroups[g].forEach((p) => {
         const item = document.createElement('div');
         item.className = 'group-item';
-        item.innerHTML = `<span>${p}</span>
-          <button onclick="unassignPitch(${g},${i})">×</button>`;
+        const safeN = p.replace(/'/g, "&#39;");
+        item.innerHTML = '<span>' + p + '</span>' +
+          '<button onclick="unassignPitchByName(' + g + ', this.dataset.name)" data-name="' + safeN + '">×</button>';
         list.appendChild(item);
       });
-      document.getElementById(`group-${g}-count`).textContent = `${setupGroups[g].length} pitches`;
+      document.getElementById('group-' + g + '-count').textContent = setupGroups[g].length + ' pitches';
     });
     const remaining = unassigned.length;
     document.getElementById('setup-status').textContent =
-      remaining > 0 ? `${remaining} pitches unassigned` : `All pitches assigned — ready to begin`;
+      remaining > 0 ? remaining + ' pitches unassigned' : 'All pitches assigned — ready to begin';
   }
 
-  window.assignPitch = function(i, g) {
-    if (g === \'\') return;
-    setupGroups[parseInt(g)].push(unassigned[i]);
-    unassigned.splice(i, 1);
+  window.assignPitchByName = function(name, g) {
+    if (!g) return;
+    const idx = unassigned.indexOf(name);
+    if (idx === -1) return;
+    setupGroups[parseInt(g)].push(name);
+    unassigned.splice(idx, 1);
     renderSetup();
   };
 
-  window.unassignPitch = function(g, i) {
-    unassigned.push(setupGroups[g][i]);
-    setupGroups[g].splice(i, 1);
+  window.unassignPitchByName = function(g, name) {
+    const idx = setupGroups[g].indexOf(name);
+    if (idx === -1) return;
+    unassigned.push(name);
+    setupGroups[g].splice(idx, 1);
     renderSetup();
   };
 
