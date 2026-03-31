@@ -22,7 +22,8 @@
   const app = initializeApp(firebaseConfig);
   const db = getDatabase(app);
 
-  let setupPitches = [
+  const VOTE_DURATION = 30;
+  const DEFAULT_PITCHES = [
     "The Bridge Ministry","The Mouton Land Question","LPSS Satellite Bus Stops",
     "E-bikes and Scooters","Cy, Age 5: Trucks","I-49 'Go West at Carencro'",
     "Noise Pollution","Downtown Grocery Desert","Recycling Scam?",
@@ -31,7 +32,9 @@
     "Bus Stop Shelter Gap","Palantir & Flock Cameras","Road Striping"
   ];
 
-  const VOTE_DURATION = 30;
+  // groups: array of 3, each is array of pitch names
+  let setupGroups = [[], [], []];
+  let unassigned = [...DEFAULT_PITCHES];
   let timerInterval = null;
   let stateUnsub = null;
   let lastState = null;
@@ -45,81 +48,107 @@
 
   // ── SETUP ──
   function renderSetup() {
-    const grid = document.getElementById('pitch-grid');
-    grid.innerHTML = '';
-    setupPitches.forEach((p, i) => addPitchCard(p, i));
-    document.getElementById('setup-deck').textContent =
-      `${setupPitches.length} pitches loaded — edit titles if needed, then randomize and begin`;
+    // Unassigned pool
+    const pool = document.getElementById('unassigned-pool');
+    pool.innerHTML = '';
+    unassigned.forEach((p, i) => {
+      const chip = document.createElement('div');
+      chip.className = 'pitch-chip';
+      chip.innerHTML = `<span>${p}</span>
+        <select onchange="assignPitch(${i}, this.value); this.value=''" style="font-family:'IBM Plex Mono',monospace;font-size:9px;border:none;background:transparent;cursor:pointer;color:var(--muted);">
+          <option value="">→ Group</option>
+          <option value="0">Group A</option>
+          <option value="1">Group B</option>
+          <option value="2">Group C</option>
+        </select>`;
+      pool.appendChild(chip);
+    });
+
+    // Add pitch input
+    // Groups
+    [0,1,2].forEach(g => {
+      const list = document.getElementById(`group-${g}-list`);
+      list.innerHTML = '';
+      setupGroups[g].forEach((p, i) => {
+        const item = document.createElement('div');
+        item.className = 'group-item';
+        item.innerHTML = `<span>${p}</span>
+          <button onclick="unassignPitch(${g},${i})" style="border:none;background:none;cursor:pointer;color:#bbb;font-size:14px;">×</button>`;
+        list.appendChild(item);
+      });
+      document.getElementById(`group-${g}-count`).textContent = `${setupGroups[g].length} pitches`;
+    });
+
+    const total = setupGroups.reduce((s,g)=>s+g.length,0);
+    document.getElementById('setup-status').textContent =
+      unassigned.length > 0
+        ? `${unassigned.length} pitches unassigned`
+        : `All ${total} pitches assigned — ready to begin`;
   }
 
-  function addPitchCard(name, i) {
-    const grid = document.getElementById('pitch-grid');
-    const card = document.createElement('div');
-    card.className = 'pitch-card';
-    card.id = `card-${i}`;
-    card.innerHTML = `
-      <div class="pitch-num">Pitch #${i+1}</div>
-      <div style="display:flex;gap:6px;align-items:center;">
-        <input type="text" id="pi${i}" value="${name}"
-          style="font-family:'Playfair Display',serif;font-size:14px;font-weight:700;border:none;flex:1;outline:none;background:transparent;color:#1a1208;"
-          onchange="setupPitches[${i}]=this.value">
-        <button onclick="removePitch(${i})" style="border:none;background:none;cursor:pointer;color:#bbb;font-size:16px;padding:0 2px;" title="Remove">×</button>
-      </div>`;
-    grid.appendChild(card);
-  }
-
-  window.removePitch = function(i) {
-    setupPitches.splice(i, 1);
+  window.assignPitch = function(poolIdx, groupIdx) {
+    if (groupIdx === '') return;
+    const name = unassigned[poolIdx];
+    unassigned.splice(poolIdx, 1);
+    setupGroups[parseInt(groupIdx)].push(name);
     renderSetup();
   };
 
-  window.addPitch = function() {
-    const input = document.getElementById('new-pitch-input');
-    const name = input.value.trim();
+  window.unassignPitch = function(g, i) {
+    const name = setupGroups[g][i];
+    setupGroups[g].splice(i, 1);
+    unassigned.push(name);
+    renderSetup();
+  };
+
+  window.addNewPitch = function() {
+    const inp = document.getElementById('new-pitch-input');
+    const name = inp.value.trim();
     if (!name) return;
-    setupPitches.push(name);
-    input.value = '';
+    unassigned.push(name);
+    inp.value = '';
     renderSetup();
-    // scroll to bottom of grid
-    const grid = document.getElementById('pitch-grid');
-    grid.lastChild && grid.lastChild.scrollIntoView({ behavior: 'smooth' });
   };
 
-  window.addPitchOnEnter = function(e) {
-    if (e.key === 'Enter') window.addPitch();
-  };
+  window.addOnEnter = function(e) { if (e.key==='Enter') window.addNewPitch(); };
 
-  // ── SHUFFLE ──
-  function shuffle(arr) {
-    const a = [...arr];
-    for (let i = a.length-1; i > 0; i--) {
-      const j = Math.floor(Math.random()*(i+1));
-      [a[i],a[j]]=[a[j],a[i]];
-    }
-    return a;
-  }
+  window.autoAssign = function() {
+    // Shuffle unassigned and distribute evenly
+    const all = [...unassigned];
+    for (let i=all.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[all[i],all[j]]=[all[j],all[i]];}
+    setupGroups = [[],[],[]];
+    all.forEach((p,i) => setupGroups[i%3].push(p));
+    unassigned = [];
+    renderSetup();
+  };
 
   // ── START TOURNAMENT ──
   window.startTournament = async function() {
-    // Collect any edited pitch names
-    const pitches = setupPitches.map((p,i) => {
-      const el = document.getElementById(`pi${i}`);
-      return el ? (el.value.trim()||p) : p;
-    }).filter(p => p.trim());
+    if (unassigned.length > 0) {
+      if (!confirm(`${unassigned.length} pitches are still unassigned. Continue anyway?`)) return;
+    }
+    const groups = setupGroups.filter(g=>g.length>0);
+    if (groups.length < 1) { alert('Assign at least one group first.'); return; }
 
-    if (pitches.length < 2) { alert('Need at least 2 pitches.'); return; }
+    const groupStages = groups.map((pitches, gi) => ({
+      name: ['A','B','C'][gi],
+      pitches,
+      votes: Object.fromEntries(pitches.map(p=>[p,0])),
+      open: false,
+      closed: false,
+      timerSeconds: VOTE_DURATION
+    }));
 
-    const shuffled = shuffle(pitches);
-    const competitors = shuffled.map(name => ({ name, wins:0, losses:0, eliminated:false }));
-    const matchups = makeWinnersMatchups(competitors, 1);
     await set(ref(db,'tournament'), {
-      competitors, matchups,
-      currentMatchupIndex: 0,
+      phase: 'group',
+      groupStages,
+      currentGroup: 0,
+      knockoutMatchups: [],
+      knockoutIndex: 0,
       timerSeconds: VOTE_DURATION,
       votingOpen: false,
       tournamentStarted: true,
       tournamentComplete: false,
-      roundNumber: 1,
       ts: Date.now()
     });
     await set(ref(db,'votes'), null);
@@ -128,34 +157,6 @@
     subscribeState();
     updateVoterURL();
   };
-
-  // ── MATCHUP BUILDERS ──
-  function makeWinnersMatchups(competitors, round) {
-    const alive = competitors.filter(c => !c.eliminated && c.losses===0);
-    const out = [];
-    for (let i=0; i+1<alive.length; i+=2)
-      out.push({ a:alive[i].name, b:alive[i+1].name,
-        winner:null, aVotes:0, bVotes:0, round:`Round ${round}`, bracket:'winners', tiebreak:false });
-    return out;
-  }
-
-  function makeNextRoundMatchups(competitors, roundNumber) {
-    const wAlive = competitors.filter(c => !c.eliminated && c.losses===0);
-    const lAlive = competitors.filter(c => !c.eliminated && c.losses===1);
-    const allAlive = competitors.filter(c => !c.eliminated);
-    if (allAlive.length<=1) return [];
-    if (wAlive.length===1 && lAlive.length===1)
-      return [{ a:wAlive[0].name, b:lAlive[0].name,
-        winner:null, aVotes:0, bVotes:0, round:'Grand Final', bracket:'final', tiebreak:false }];
-    const out = [];
-    for (let i=0; i+1<wAlive.length; i+=2)
-      out.push({ a:wAlive[i].name, b:wAlive[i+1].name,
-        winner:null, aVotes:0, bVotes:0, round:`Round ${roundNumber}`, bracket:'winners', tiebreak:false });
-    for (let i=0; i+1<lAlive.length; i+=2)
-      out.push({ a:lAlive[i].name, b:lAlive[i+1].name,
-        winner:null, aVotes:0, bVotes:0, round:`Losers R${roundNumber}`, bracket:'losers', tiebreak:false });
-    return out;
-  }
 
   // ── SUBSCRIBE ──
   function subscribeState() {
@@ -172,20 +173,109 @@
   // ── BRACKET TOGGLE ──
   window.showBracket = function() {
     bracketVisible = true;
-    document.getElementById('controls-view').style.display = 'none';
-    document.getElementById('bracket-view').style.display = 'block';
+    document.getElementById('controls-view').style.display='none';
+    document.getElementById('bracket-view').style.display='block';
     if (lastState) drawBracket(lastState);
   };
-
   window.showControls = function() {
     bracketVisible = false;
-    document.getElementById('bracket-view').style.display = 'none';
-    document.getElementById('controls-view').style.display = 'block';
+    document.getElementById('bracket-view').style.display='none';
+    document.getElementById('controls-view').style.display='block';
     if (lastState) renderHost(lastState);
   };
 
-  // ── HOST CONTROLS ──
-  window.startMatchup = async function() {
+  // ── HOST: OPEN GROUP VOTE ──
+  window.openGroupVote = async function() {
+    if (timerInterval) clearInterval(timerInterval);
+    const snap = await get(ref(db,'tournament'));
+    const s = snap.val();
+    const gi = s.currentGroup;
+    await update(ref(db,'tournament'), {
+      votingOpen: true,
+      timerSeconds: VOTE_DURATION,
+      ts: Date.now()
+    });
+    await update(ref(db,`tournament/groupStages/${gi}`), { open: true });
+    document.getElementById('start-btn').style.display='none';
+    document.getElementById('end-early-btn').style.display='inline-block';
+    let secs = VOTE_DURATION;
+    timerInterval = setInterval(async () => {
+      secs--;
+      await update(ref(db,'tournament'), { timerSeconds: secs, ts: Date.now() });
+      if (secs<=0) { clearInterval(timerInterval); await closeGroupVote(); }
+    }, 1000);
+  };
+
+  window.endVoteEarly = async function() {
+    if (timerInterval) clearInterval(timerInterval);
+    await update(ref(db,'tournament'), { timerSeconds:0, ts:Date.now() });
+    if (lastState && lastState.phase==='group') await closeGroupVote();
+    else await closeKnockoutMatchup();
+  };
+
+  async function closeGroupVote() {
+    const eb=document.getElementById('end-early-btn');
+    if (eb) eb.style.display='none';
+    const snap = await get(ref(db,'tournament'));
+    const s = snap.val();
+    const gi = s.currentGroup;
+    await update(ref(db,`tournament/groupStages/${gi}`), { open:false, closed:true });
+    await update(ref(db,'tournament'), { votingOpen:false, ts:Date.now() });
+  }
+
+  // ── HOST: ADVANCE GROUP / START KNOCKOUT ──
+  window.advanceGroup = async function() {
+    const snap = await get(ref(db,'tournament'));
+    const s = snap.val();
+    const nextGroup = s.currentGroup + 1;
+
+    if (nextGroup >= s.groupStages.length) {
+      // All groups done — build knockout
+      await buildKnockout(s);
+    } else {
+      await update(ref(db,'tournament'), {
+        currentGroup: nextGroup,
+        timerSeconds: VOTE_DURATION,
+        votingOpen: false,
+        ts: Date.now()
+      });
+    }
+  };
+
+  async function buildKnockout(s) {
+    // Get top 2 from each group
+    const finalists = [];
+    s.groupStages.forEach(g => {
+      const sorted = Object.entries(g.votes).sort((a,b)=>b[1]-a[1]);
+      finalists.push(sorted[0][0]);
+      if (sorted[1]) finalists.push(sorted[1][0]);
+    });
+
+    // Shuffle finalists and build single-elim bracket
+    const shuffled = shuffle(finalists);
+    const matchups = buildSingleElim(shuffled, 1);
+
+    await update(ref(db,'tournament'), {
+      phase: 'knockout',
+      knockoutMatchups: matchups,
+      knockoutIndex: 0,
+      knockoutFinalists: finalists,
+      timerSeconds: VOTE_DURATION,
+      votingOpen: false,
+      ts: Date.now()
+    });
+  }
+
+  function buildSingleElim(competitors, round) {
+    const out = [];
+    for (let i=0; i+1<competitors.length; i+=2)
+      out.push({ a:competitors[i], b:competitors[i+1],
+        winner:null, aVotes:0, bVotes:0, round:`Semifinal`, tiebreak:false });
+    return out;
+  }
+
+  // ── HOST: KNOCKOUT ──
+  window.openKnockoutVote = async function() {
     if (timerInterval) clearInterval(timerInterval);
     await update(ref(db,'tournament'), { votingOpen:true, timerSeconds:VOTE_DURATION, ts:Date.now() });
     document.getElementById('start-btn').style.display='none';
@@ -194,91 +284,156 @@
     timerInterval = setInterval(async () => {
       secs--;
       await update(ref(db,'tournament'), { timerSeconds:secs, ts:Date.now() });
-      if (secs<=0) { clearInterval(timerInterval); await closeMatchup(); }
+      if (secs<=0) { clearInterval(timerInterval); await closeKnockoutMatchup(); }
     }, 1000);
   };
 
-  window.endVoteEarly = async function() {
-    if (timerInterval) clearInterval(timerInterval);
-    await update(ref(db,'tournament'), { timerSeconds:0, ts:Date.now() });
-    await closeMatchup();
-  };
-
-  async function closeMatchup() {
-    const eb = document.getElementById('end-early-btn');
+  async function closeKnockoutMatchup() {
+    const eb=document.getElementById('end-early-btn');
     if (eb) eb.style.display='none';
     const snap = await get(ref(db,'tournament'));
     const s = snap.val();
-    if (!s) return;
-    const idx = s.currentMatchupIndex;
-    const m = s.matchups[idx];
+    const idx = s.knockoutIndex;
+    const m = s.knockoutMatchups[idx];
     if (!m) return;
     const winnerName = m.aVotes>=m.bVotes ? m.a : m.b;
-    const loserName  = m.aVotes>=m.bVotes ? m.b : m.a;
-    const tiebreak   = m.aVotes===m.bVotes;
-    const matchups = [...s.matchups];
+    const tiebreak = m.aVotes===m.bVotes;
+    const matchups = [...s.knockoutMatchups];
     matchups[idx] = {...m, winner:winnerName, tiebreak};
-    const competitors = s.competitors.map(c => {
-      if (c.name===winnerName) return {...c, wins:c.wins+1};
-      if (c.name===loserName) { const l=c.losses+1; return {...c, losses:l, eliminated:l>=2}; }
-      return c;
-    });
-    await update(ref(db,'tournament'), { matchups, competitors, votingOpen:false, ts:Date.now() });
+    await update(ref(db,'tournament'), { knockoutMatchups:matchups, votingOpen:false, ts:Date.now() });
   }
 
-  window.advanceMatchup = async function() {
+  window.advanceKnockout = async function() {
     const snap = await get(ref(db,'tournament'));
     const s = snap.val();
-    if (!s) return;
-    const nextIdx = s.currentMatchupIndex+1;
-    let matchups = [...s.matchups];
-    let roundNumber = s.roundNumber;
+    const nextIdx = s.knockoutIndex + 1;
+    let matchups = [...s.knockoutMatchups];
     let tournamentComplete = false;
-    if (nextIdx>=matchups.length) {
-      roundNumber++;
-      const newM = makeNextRoundMatchups(s.competitors, roundNumber);
-      if (newM.length===0) tournamentComplete=true;
-      else matchups=[...matchups,...newM];
+
+    if (nextIdx >= matchups.length) {
+      // Build next round from winners
+      const winners = matchups.filter(m=>m.winner).map(m=>m.winner);
+      if (winners.length === 1) {
+        tournamentComplete = true;
+      } else {
+        const roundName = winners.length === 2 ? 'Final' : 'Semifinal';
+        const newMatchups = [];
+        for (let i=0; i+1<winners.length; i+=2)
+          newMatchups.push({ a:winners[i], b:winners[i+1],
+            winner:null, aVotes:0, bVotes:0, round:roundName, tiebreak:false });
+        matchups = [...matchups, ...newMatchups];
+      }
     }
+
     await update(ref(db,'tournament'), {
-      currentMatchupIndex:nextIdx, matchups, roundNumber,
-      tournamentComplete, timerSeconds:VOTE_DURATION, votingOpen:false, ts:Date.now()
+      knockoutIndex: nextIdx,
+      knockoutMatchups: matchups,
+      tournamentComplete,
+      timerSeconds: VOTE_DURATION,
+      votingOpen: false,
+      ts: Date.now()
     });
   };
 
-  window.resetTournament = async function() {
-    if (!confirm('Reset the entire tournament? This cannot be undone.')) return;
-    if (timerInterval) clearInterval(timerInterval);
-    await set(ref(db,'tournament'), null);
-    await set(ref(db,'votes'), null);
-    showScreen('setup-screen');
-    renderSetup();
-  };
+  function shuffle(arr) {
+    const a=[...arr];
+    for (let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];}
+    return a;
+  }
 
-  // ── RENDER HOST CONTROLS ──
+  // ── RENDER HOST ──
   function renderHost(s) {
     if (s.tournamentComplete) { renderResults(s); return; }
-    const idx = s.currentMatchupIndex;
-    const m = (s.matchups||[])[idx];
+    if (s.phase==='group') renderGroupHost(s);
+    else renderKnockoutHost(s);
+  }
+
+  function renderGroupHost(s) {
+    const gi = s.currentGroup;
+    const g = s.groupStages[gi];
+    if (!g) return;
+
+    document.getElementById('host-round-label').textContent = `Group ${g.name} — Audience Vote`;
+    document.getElementById('phase-badge').textContent = `GROUP STAGE · ${gi+1} of ${s.groupStages.length}`;
+
+    // Render pitch list with live vote counts
+    const votes = g.votes || {};
+    const sorted = [...g.pitches].sort((a,b)=>(votes[b]||0)-(votes[a]||0));
+    const maxV = Math.max(...Object.values(votes), 1);
+    const total = Object.values(votes).reduce((s,v)=>s+v,0);
+
+    let html = '';
+    sorted.forEach((p, i) => {
+      const v = votes[p] || 0;
+      const pct = total ? Math.round(v/total*100) : 0;
+      const isTop2 = i < 2 && g.closed;
+      html += `<div class="group-pitch-row ${isTop2?'advancing':''}">
+        <div class="group-pitch-rank">${i+1}</div>
+        <div class="group-pitch-name">${p}</div>
+        <div class="group-pitch-bar-wrap"><div class="group-pitch-bar" style="width:${total?pct:0}%"></div></div>
+        <div class="group-pitch-votes">${v}</div>
+        ${isTop2?'<div class="advancing-badge">ADVANCES</div>':''}
+      </div>`;
+    });
+    document.getElementById('group-pitches').innerHTML = html;
+
+    const secs = s.timerSeconds!==undefined?s.timerSeconds:VOTE_DURATION;
+    const tEl=document.getElementById('host-timer');
+    tEl.textContent=secs;
+    tEl.classList.toggle('urgent',secs<=10);
+    const bar=document.getElementById('timer-bar');
+    if (bar) bar.style.width=Math.max(0,secs/VOTE_DURATION*100)+'%';
+
+    document.getElementById('vote-total').textContent =
+      `${total} vote${total!==1?'s':''} cast`;
+
+    const sb=document.getElementById('start-btn');
+    const nb=document.getElementById('next-btn');
+    const eb=document.getElementById('end-early-btn');
+    sb.onclick = openGroupVote;
+
+    if (g.closed) {
+      sb.style.display='none'; eb.style.display='none';
+      nb.style.display='inline-block';
+      const isLast = gi+1 >= s.groupStages.length;
+      nb.textContent = isLast ? 'Build Knockout Bracket →' : `Next Group (${['A','B','C'][gi+1]}) →`;
+      nb.onclick = advanceGroup;
+      document.getElementById('matchup-result').textContent =
+        `✓ Group ${g.name} complete — top 2 advance`;
+      document.getElementById('matchup-result').style.display='block';
+    } else if (s.votingOpen) {
+      sb.style.display='none'; nb.style.display='none'; eb.style.display='inline-block';
+      document.getElementById('matchup-result').style.display='none';
+    } else {
+      sb.style.display='inline-block'; nb.style.display='none'; eb.style.display='none';
+      document.getElementById('matchup-result').style.display='none';
+    }
+  }
+
+  function renderKnockoutHost(s) {
+    const idx = s.knockoutIndex;
+    const m = (s.knockoutMatchups||[])[idx];
     if (!m) { renderResults(s); return; }
 
-    document.getElementById('host-round-label').textContent = `${m.round} — Double Elimination`;
-    document.getElementById('matchup-round-badge').textContent = m.round;
-    document.getElementById('comp-a-name').textContent = m.a;
-    document.getElementById('comp-b-name').textContent = m.b;
+    document.getElementById('host-round-label').textContent = `${m.round} — Knockout Stage`;
+    document.getElementById('phase-badge').textContent = `KNOCKOUT`;
 
-    const aV=m.aVotes||0, bV=m.bVotes||0, tot=aV+bV;
-    document.getElementById('comp-a-votes').textContent = aV;
-    document.getElementById('comp-b-votes').textContent = bV;
-    document.getElementById('vote-total').textContent = `${tot} vote${tot!==1?'s':''} cast`+(m.tiebreak?' — tiebreak':'');
-
-    const aPct=tot?Math.round(aV/tot*100):50, bPct=tot?Math.round(bV/tot*100):50;
-    document.getElementById('bar-a').style.width=aPct+'%';
-    document.getElementById('bar-b').style.width=bPct+'%';
-    document.getElementById('pct-a').textContent=tot?aPct+'%':'';
-    document.getElementById('pct-b').textContent=tot?bPct+'%':'';
-    document.getElementById('comp-a').classList.toggle('leading',aV>bV);
-    document.getElementById('comp-b').classList.toggle('leading',bV>aV);
+    document.getElementById('group-pitches').innerHTML = `
+      <div class="versus-row">
+        <div class="competitor ${(m.aVotes||0)>(m.bVotes||0)?'leading':''}">
+          <div class="competitor-name">${m.a}</div>
+          <div class="competitor-votes">${m.aVotes||0}</div>
+          <div class="vote-bar-wrap"><div class="vote-bar" style="width:${votePct(m.aVotes,m.bVotes)}%"></div></div>
+          <div class="competitor-pct">${votePctLabel(m.aVotes,m.bVotes)}</div>
+        </div>
+        <div class="vs-label">vs</div>
+        <div class="competitor ${(m.bVotes||0)>(m.aVotes||0)?'leading':''}">
+          <div class="competitor-name">${m.b}</div>
+          <div class="competitor-votes">${m.bVotes||0}</div>
+          <div class="vote-bar-wrap"><div class="vote-bar" style="width:${votePct(m.bVotes,m.aVotes)}%"></div></div>
+          <div class="competitor-pct">${votePctLabel(m.bVotes,m.aVotes)}</div>
+        </div>
+      </div>`;
 
     const secs=s.timerSeconds!==undefined?s.timerSeconds:VOTE_DURATION;
     const tEl=document.getElementById('host-timer');
@@ -287,14 +442,20 @@
     const bar=document.getElementById('timer-bar');
     if (bar) bar.style.width=Math.max(0,secs/VOTE_DURATION*100)+'%';
 
+    const tot=(m.aVotes||0)+(m.bVotes||0);
+    document.getElementById('vote-total').textContent=`${tot} vote${tot!==1?'s':''} cast`;
+
     const sb=document.getElementById('start-btn');
     const nb=document.getElementById('next-btn');
     const eb=document.getElementById('end-early-btn');
+    sb.onclick = openKnockoutVote;
+
     if (m.winner) {
-      sb.style.display='none'; nb.style.display='inline-block'; eb.style.display='none';
-      const rl=document.getElementById('matchup-result');
-      rl.textContent=`✓ ${m.winner} advances${m.tiebreak?' (tiebreak)':''}`;
-      rl.style.display='block';
+      sb.style.display='none'; eb.style.display='none'; nb.style.display='inline-block';
+      nb.textContent = 'Next Matchup →';
+      nb.onclick = advanceKnockout;
+      document.getElementById('matchup-result').textContent=`✓ ${m.winner} advances${m.tiebreak?' (tiebreak)':''}`;
+      document.getElementById('matchup-result').style.display='block';
     } else if (s.votingOpen) {
       sb.style.display='none'; nb.style.display='none'; eb.style.display='inline-block';
       document.getElementById('matchup-result').style.display='none';
@@ -302,219 +463,224 @@
       sb.style.display='inline-block'; nb.style.display='none'; eb.style.display='none';
       document.getElementById('matchup-result').style.display='none';
     }
-
-    renderField(s.competitors||[]);
   }
 
-  function renderField(competitors) {
-    const el=document.getElementById('field-status');
-    if (!el) return;
-    el.innerHTML='';
-    competitors.forEach(c=>{
-      const p=document.createElement('span');
-      p.textContent=c.eliminated?c.name:c.losses===1?`⚠ ${c.name}`:`✓ ${c.name}`;
-      p.className=c.eliminated?'elim-pill':c.losses===1?'loss1-pill':'alive-pill';
-      el.appendChild(p);
-    });
+  function votePct(a,b) {
+    const t=(a||0)+(b||0);
+    return t ? Math.round((a||0)/t*100) : 50;
+  }
+  function votePctLabel(a,b) {
+    const t=(a||0)+(b||0);
+    return t ? Math.round((a||0)/t*100)+'%' : '';
   }
 
-  // ── NCAA BRACKET DRAWING ──
+  // ── BRACKET DRAWING ──
   function drawBracket(s) {
     const canvas = document.getElementById('bracket-canvas');
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
 
-    const matchups = s.matchups || [];
-    const currentIdx = s.currentMatchupIndex || 0;
-
-    const winners = matchups.filter(m=>m.bracket==='winners');
-    const losers  = matchups.filter(m=>m.bracket==='losers');
-    const finals  = matchups.filter(m=>m.bracket==='final');
-
-    const wRounds = groupByRound(winners);
-    const lRounds = groupByRound(losers);
-    const wKeys = Object.keys(wRounds);
-    const lKeys = Object.keys(lRounds);
-
-    // Layout constants
-    const BOX_W = 150, BOX_H = 28, ENTRY_H = BOX_H, GAP_Y = 8;
-    const ROUND_GAP = 40, PAD_LEFT = 20, PAD_TOP = 40, PAD_BOT = 20;
-
+    const BOX_W=160, ENTRY_H=30, GAP_Y=10, ROUND_GAP=50, PAD=30;
     const INK='#1a1208', ACCENT='#c8392b', GOLD='#d4a017', GREEN='#2e7d32', MUTED='#6b5f4a';
-    const PAPER='#f5f0e8';
 
-    // Count max rounds
-    const totalRoundCols = Math.max(wKeys.length, lKeys.length) + (finals.length?1:0);
+    // ── GROUP STAGE DISPLAY ──
+    const groups = s.groupStages || [];
+    const knockout = s.knockoutMatchups || [];
 
-    // Compute canvas size
-    const maxWPerRound = wKeys.length ? Math.max(...wKeys.map(k=>wRounds[k].length)) : 1;
-    const maxLPerRound = lKeys.length ? Math.max(...lKeys.map(k=>lRounds[k].length)) : 0;
+    // Group columns + knockout columns
+    const groupColW = BOX_W + ROUND_GAP;
+    const maxGroupSize = Math.max(...groups.map(g=>g.pitches.length), 1);
+    const groupH = maxGroupSize * (ENTRY_H + GAP_Y) + 60;
 
-    const halfH_W = maxWPerRound * (ENTRY_H*2 + GAP_Y) + PAD_TOP + PAD_BOT;
-    const halfH_L = maxLPerRound > 0 ? maxLPerRound * (ENTRY_H*2 + GAP_Y) + PAD_TOP + PAD_BOT : 0;
-    const H = Math.max(halfH_W + halfH_L, 200);
-    const W = totalRoundCols * (BOX_W + ROUND_GAP) + PAD_LEFT * 2;
+    // Knockout rounds
+    const kRounds = groupByRound(knockout);
+    const kKeys = Object.keys(kRounds);
+    const kCols = kKeys.length + (s.tournamentComplete ? 1 : 0);
 
-    canvas.width = W;
-    canvas.height = H;
-    canvas.style.width = W+'px';
-    canvas.style.height = H+'px';
+    const W = Math.max(groups.length * groupColW + kCols*(BOX_W+ROUND_GAP) + PAD*2, 700);
+    const H = Math.max(groupH + 60, 400);
 
-    ctx.fillStyle = '#faf7f0';
+    canvas.width=W; canvas.height=H;
+    canvas.style.width=W+'px'; canvas.style.height=H+'px';
+
+    ctx.fillStyle='#faf7f0';
     ctx.fillRect(0,0,W,H);
 
-    // Section divider
-    if (halfH_L > 0) {
-      ctx.strokeStyle = '#e0d8cc';
-      ctx.setLineDash([6,4]);
-      ctx.lineWidth = 1;
-      ctx.beginPath(); ctx.moveTo(0,halfH_W); ctx.lineTo(W,halfH_W); ctx.stroke();
-      ctx.setLineDash([]);
-      ctx.font = 'bold 9px IBM Plex Mono,monospace';
-      ctx.fillStyle = MUTED;
-      ctx.fillText('WINNERS BRACKET', PAD_LEFT, 14);
-      ctx.fillText('LOSERS BRACKET', PAD_LEFT, halfH_W+14);
+    // Section labels
+    ctx.font='bold 9px IBM Plex Mono,monospace';
+    ctx.fillStyle=MUTED;
+    if (groups.length) ctx.fillText('GROUP STAGE', PAD, 16);
+    if (knockout.length) {
+      const kx = groups.length*groupColW+PAD;
+      ctx.fillText('KNOCKOUT', kx, 16);
     }
 
-    // Store box centers for connector lines: { mIdx: {x1,x2,cy} }
+    // Draw divider
+    if (groups.length && knockout.length) {
+      const dx = groups.length*groupColW+PAD/2;
+      ctx.strokeStyle='#ddd'; ctx.setLineDash([4,4]); ctx.lineWidth=1;
+      ctx.beginPath(); ctx.moveTo(dx,20); ctx.lineTo(dx,H-10); ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    // ── DRAW GROUPS ──
+    const groupFinalistPositions = []; // {x,y} of top 2 in each group for connectors
+    groups.forEach((g, gi) => {
+      const x = PAD + gi*groupColW;
+      const topY = 30;
+
+      // Group label
+      ctx.font='bold 11px IBM Plex Mono,monospace';
+      ctx.fillStyle=INK;
+      ctx.fillText(`GROUP ${g.name}`, x, topY);
+
+      const votes = g.votes || {};
+      const sorted = [...g.pitches].sort((a,b)=>(votes[b]||0)-(votes[a]||0));
+      const maxV = Math.max(...sorted.map(p=>votes[p]||0), 1);
+      const gFinalists = [];
+
+      sorted.forEach((p, pi) => {
+        const y = topY + 20 + pi*(ENTRY_H+GAP_Y);
+        const v = votes[p]||0;
+        const isTop2 = g.closed && pi<2;
+        const isCurrent = s.phase==='group' && s.currentGroup===gi && !g.closed;
+
+        // Box
+        ctx.fillStyle = isTop2 ? '#e8f5e9' : isCurrent ? '#fff8e1' : 'white';
+        ctx.strokeStyle = isTop2 ? '#a5d6a7' : isCurrent ? GOLD : '#ccc';
+        ctx.lineWidth = isCurrent ? 2 : 1;
+        ctx.fillRect(x, y, BOX_W, ENTRY_H);
+        ctx.strokeRect(x, y, BOX_W, ENTRY_H);
+
+        // Vote bar bg
+        if (g.open || g.closed) {
+          const barW = Math.max(0, (BOX_W-2) * (v/maxV));
+          ctx.fillStyle = isTop2 ? '#c8f7c5' : '#eee';
+          ctx.fillRect(x+1, y+ENTRY_H-7, barW, 5);
+        }
+
+        // Name
+        ctx.font = isTop2 ? 'bold 11px IBM Plex Sans,sans-serif' : '11px IBM Plex Sans,sans-serif';
+        ctx.fillStyle = isTop2 ? GREEN : INK;
+        ctx.fillText(trunc(p,18)+(isTop2?' ✓':''), x+6, y+ENTRY_H*0.65);
+
+        // Vote count
+        if (g.open || g.closed) {
+          ctx.font='10px IBM Plex Mono,monospace';
+          ctx.fillStyle=MUTED;
+          ctx.textAlign='right';
+          ctx.fillText(v, x+BOX_W-4, y+ENTRY_H*0.65);
+          ctx.textAlign='left';
+        }
+
+        if (isTop2) gFinalists.push({ x:x+BOX_W, y:y+ENTRY_H/2 });
+      });
+      groupFinalistPositions.push(gFinalists);
+    });
+
+    // ── DRAW KNOCKOUT ──
+    const kStartX = groups.length*groupColW + PAD;
     const boxMeta = {};
 
-    function drawEntry(name, x, y, w, isWin, isLose, isCurr) {
-      ctx.fillStyle = isWin ? '#e8f5e9' : isLose ? '#fdecea' : isCurr ? '#fff8e1' : 'white';
-      ctx.fillRect(x, y, w, ENTRY_H);
-      ctx.strokeStyle = isCurr ? GOLD : isWin ? '#a5d6a7' : isLose ? '#ef9a9a' : '#ccc';
-      ctx.lineWidth = isCurr ? 2 : 1;
-      ctx.strokeRect(x, y, w, ENTRY_H);
-      ctx.font = isWin ? `bold 11px IBM Plex Sans,sans-serif` : `11px IBM Plex Sans,sans-serif`;
-      ctx.fillStyle = isWin ? GREEN : isLose ? '#bbb' : INK;
-      ctx.fillText(trunc(name, 19)+(isWin?' ✓':''), x+6, y+ENTRY_H*0.68);
+    function drawEntry(name, x, y, isWin, isLose, isCurr) {
+      ctx.fillStyle=isWin?'#e8f5e9':isLose?'#fdecea':isCurr?'#fff8e1':'white';
+      ctx.strokeStyle=isCurr?GOLD:isWin?'#a5d6a7':isLose?'#ef9a9a':'#ccc';
+      ctx.lineWidth=isCurr?2:1;
+      ctx.fillRect(x,y,BOX_W,ENTRY_H);
+      ctx.strokeRect(x,y,BOX_W,ENTRY_H);
+      ctx.font=isWin?'bold 11px IBM Plex Sans,sans-serif':'11px IBM Plex Sans,sans-serif';
+      ctx.fillStyle=isWin?GREEN:isLose?'#bbb':INK;
+      ctx.fillText(trunc(name,18)+(isWin?' ✓':''),x+6,y+ENTRY_H*0.65);
     }
 
-    function drawMatchBox(m, x, y, isCurr) {
-      const doneA = !!m.winner, isWinA = m.winner===m.a, isWinB = m.winner===m.b;
-      drawEntry(m.a, x, y,             BOX_W, isWinA, doneA&&!isWinA, isCurr);
-      drawEntry(m.b, x, y+ENTRY_H+1,  BOX_W, isWinB, doneA&&!isWinB, isCurr);
-      return { left: x, right: x+BOX_W, top: y, mid: y+ENTRY_H+0.5, bot: y+ENTRY_H*2+1 };
-    }
+    if (knockout.length) {
+      const currentKidx = s.knockoutIndex || 0;
+      kKeys.forEach((rn, ri) => {
+        const ms = kRounds[rn];
+        const x = kStartX + ri*(BOX_W+ROUND_GAP);
+        const totalH = ms.length*(ENTRY_H*2+GAP_Y*2+4)-GAP_Y;
+        const startY = 30 + (H-60-totalH)/2;
 
-    function layoutRound(rounds, keys, ri, topY, halfHeight) {
-      const ms = rounds[keys[ri]];
-      const x = PAD_LEFT + ri*(BOX_W+ROUND_GAP);
-      const totalH = ms.length*(ENTRY_H*2+1+GAP_Y)-GAP_Y;
-      const startY = topY + PAD_TOP + (halfHeight - PAD_TOP - PAD_BOT - totalH)/2;
-      const positions = [];
-      ms.forEach((m, i) => {
-        const mIdx = matchups.indexOf(m);
-        const isCurr = mIdx===currentIdx;
-        const y = startY + i*(ENTRY_H*2+1+GAP_Y);
-        const meta = drawMatchBox(m, x, y, isCurr);
-        boxMeta[mIdx] = meta;
-        positions.push({ m, mIdx, meta, i });
-      });
-      return positions;
-    }
-
-    // Draw connector lines between rounds
-    function connectRounds(thisPositions, nextPositions) {
-      ctx.strokeStyle = '#ccc';
-      ctx.lineWidth = 1;
-      thisPositions.forEach(({meta, i}) => {
-        const nextPos = nextPositions[Math.floor(i/2)];
-        if (!nextPos) return;
-        const x1 = meta.right;
-        const y1 = meta.mid;
-        const x2 = nextPos.meta.left;
-        const y2 = i%2===0 ? nextPos.meta.top+ENTRY_H*0.5 : nextPos.meta.mid+ENTRY_H*0.5;
-        const mx = x1 + (x2-x1)/2;
-        ctx.beginPath();
-        ctx.moveTo(x1,y1); ctx.lineTo(mx,y1); ctx.lineTo(mx,y2); ctx.lineTo(x2,y2);
-        ctx.stroke();
-      });
-    }
-
-    // Draw round labels
-    function drawRoundLabel(label, ri, y) {
-      const x = PAD_LEFT + ri*(BOX_W+ROUND_GAP);
-      ctx.font = 'bold 9px IBM Plex Mono,monospace';
-      ctx.fillStyle = MUTED;
-      ctx.fillText(label, x, y);
-    }
-
-    // ── WINNERS BRACKET ──
-    const wTopY = halfH_L > 0 ? 0 : 0;
-    const wPositionsByRound = [];
-    wKeys.forEach((k, ri) => {
-      drawRoundLabel(k, ri, wTopY+PAD_TOP-6);
-      const pos = layoutRound(wRounds, wKeys, ri, wTopY, halfH_W);
-      wPositionsByRound.push(pos);
-    });
-    for (let ri=0; ri<wPositionsByRound.length-1; ri++) {
-      connectRounds(wPositionsByRound[ri], wPositionsByRound[ri+1]);
-    }
-
-    // ── LOSERS BRACKET ──
-    const lTopY = halfH_W;
-    const lPositionsByRound = [];
-    lKeys.forEach((k, ri) => {
-      drawRoundLabel(k, ri, lTopY+PAD_TOP-6);
-      const pos = layoutRound(lRounds, lKeys, ri, lTopY, halfH_L);
-      lPositionsByRound.push(pos);
-    });
-    for (let ri=0; ri<lPositionsByRound.length-1; ri++) {
-      connectRounds(lPositionsByRound[ri], lPositionsByRound[ri+1]);
-    }
-
-    // ── GRAND FINAL ──
-    finals.forEach(m => {
-      const mIdx = matchups.indexOf(m);
-      const isCurr = mIdx===currentIdx;
-      const ri = Math.max(wKeys.length, lKeys.length);
-      const x = PAD_LEFT + ri*(BOX_W+ROUND_GAP);
-      const y = H/2 - ENTRY_H - 0.5;
-      drawRoundLabel('GRAND FINAL', ri, y-8);
-      ctx.font = ''; // reset
-      const meta = drawMatchBox(m, x, y, isCurr);
-      boxMeta[mIdx] = meta;
-
-      // Connect from last winners round
-      if (wPositionsByRound.length) {
-        const lastW = wPositionsByRound[wPositionsByRound.length-1];
-        if (lastW[0]) {
-          const lm = lastW[0].meta;
-          const mx = lm.right + (x-lm.right)/2;
-          ctx.strokeStyle='#ccc'; ctx.lineWidth=1;
-          ctx.beginPath(); ctx.moveTo(lm.right,lm.mid); ctx.lineTo(mx,lm.mid);
-          ctx.lineTo(mx,meta.top+ENTRY_H*0.5); ctx.lineTo(x,meta.top+ENTRY_H*0.5); ctx.stroke();
-        }
-      }
-      // Connect from last losers round
-      if (lPositionsByRound.length) {
-        const lastL = lPositionsByRound[lPositionsByRound.length-1];
-        if (lastL[0]) {
-          const lm = lastL[0].meta;
-          const mx = lm.right + (x-lm.right)/2;
-          ctx.strokeStyle='#ccc'; ctx.lineWidth=1;
-          ctx.beginPath(); ctx.moveTo(lm.right,lm.mid); ctx.lineTo(mx,lm.mid);
-          ctx.lineTo(mx,meta.mid+ENTRY_H*0.5); ctx.lineTo(x,meta.mid+ENTRY_H*0.5); ctx.stroke();
-        }
-      }
-
-      // Champion label
-      if (m.winner) {
-        ctx.font='bold 12px IBM Plex Mono,monospace';
-        ctx.fillStyle=ACCENT;
-        ctx.fillText('🏆 '+m.winner, x+BOX_W+12, meta.top+ENTRY_H);
-      }
-    });
-
-    // Highlight current matchup label
-    if (matchups[currentIdx]) {
-      const cm = matchups[currentIdx];
-      const meta = boxMeta[currentIdx];
-      if (meta) {
         ctx.font='bold 9px IBM Plex Mono,monospace';
-        ctx.fillStyle=GOLD;
-        ctx.fillText('▶ NOW VOTING', meta.left, meta.top-4);
+        ctx.fillStyle=MUTED;
+        ctx.fillText(rn, x, 26);
+
+        ms.forEach((m, mi) => {
+          const mIdx = knockout.indexOf(m);
+          const isCurr = mIdx===currentKidx && s.phase==='knockout';
+          const y = startY + mi*(ENTRY_H*2+GAP_Y*2+4);
+          const doneA=!!m.winner, wA=m.winner===m.a, wB=m.winner===m.b;
+          drawEntry(m.a, x, y, wA, doneA&&!wA, isCurr);
+          drawEntry(m.b, x, y+ENTRY_H+2, wB, doneA&&!wB, isCurr);
+          if (isCurr) {
+            ctx.font='bold 9px IBM Plex Mono,monospace';
+            ctx.fillStyle=GOLD;
+            ctx.fillText('▶ NOW VOTING', x, y-4);
+          }
+          boxMeta[mIdx]={x, y, mid:y+ENTRY_H+1, right:x+BOX_W, bot:y+ENTRY_H*2+2};
+
+          // Connectors to next round
+          if (ri<kKeys.length-1) {
+            const nextMs = kRounds[kKeys[ri+1]];
+            const nextM = nextMs[Math.floor(mi/2)];
+            const nextIdx = knockout.indexOf(nextM);
+            const nm = boxMeta[nextIdx];
+            if (nm) {
+              const y1 = y+ENTRY_H+1, y2 = mi%2===0?nm.y+ENTRY_H*0.5:nm.y+ENTRY_H*1.5+2;
+              const mx = x+BOX_W+(ROUND_GAP/2);
+              ctx.strokeStyle='#ccc'; ctx.lineWidth=1;
+              ctx.beginPath(); ctx.moveTo(x+BOX_W,y1); ctx.lineTo(mx,y1); ctx.lineTo(mx,y2); ctx.lineTo(x+BOX_W+ROUND_GAP,y2); ctx.stroke();
+            }
+          }
+        });
+      });
+
+      // Champion
+      if (s.tournamentComplete) {
+        const lastRound = kRounds[kKeys[kKeys.length-1]];
+        const champ = lastRound && lastRound[0] && lastRound[0].winner;
+        if (champ) {
+          const x = kStartX + kKeys.length*(BOX_W+ROUND_GAP);
+          const y = H/2-ENTRY_H/2;
+          ctx.font='bold 10px IBM Plex Mono,monospace'; ctx.fillStyle=ACCENT;
+          ctx.fillText('🏆 CHAMPION', x, y-6);
+          ctx.fillStyle='#fff8e1'; ctx.strokeStyle=GOLD; ctx.lineWidth=2;
+          ctx.fillRect(x,y,BOX_W,ENTRY_H); ctx.strokeRect(x,y,BOX_W,ENTRY_H);
+          ctx.font='bold 12px Playfair Display,serif'; ctx.fillStyle=ACCENT;
+          ctx.fillText(trunc(champ,16),x+6,y+ENTRY_H*0.68);
+        }
+      }
+
+      // Connector lines from groups to first knockout round
+      if (groups.length && kKeys.length) {
+        const firstKx = kStartX;
+        const firstMs = kRounds[kKeys[0]];
+        firstMs.forEach((m, mi) => {
+          const targetY = 30 + (H-60-(firstMs.length*(ENTRY_H*2+GAP_Y*2+4)-GAP_Y))/2 + mi*(ENTRY_H*2+GAP_Y*2+4);
+          const entryYA = targetY + ENTRY_H*0.5;
+          const entryYB = targetY + ENTRY_H*1.5 + 2;
+
+          // Find which group finalist corresponds
+          const allFinalists = groupFinalistPositions.flat();
+          const fA = allFinalists.find(f => {
+            const gIdx = Math.floor(groupFinalistPositions.indexOf(groupFinalistPositions.find(gfp=>gfp.includes(f))));
+            return true;
+          });
+
+          // Simple: draw lines from each group's finalist positions
+          ctx.strokeStyle='#ddd'; ctx.lineWidth=1;
+          if (mi < groupFinalistPositions.length) {
+            const gfp = groupFinalistPositions[mi];
+            if (gfp && gfp[0]) {
+              const mx = gfp[0].x + (firstKx-gfp[0].x)/2;
+              ctx.beginPath(); ctx.moveTo(gfp[0].x,gfp[0].y); ctx.lineTo(mx,gfp[0].y); ctx.lineTo(mx,entryYA); ctx.lineTo(firstKx,entryYA); ctx.stroke();
+            }
+            if (gfp && gfp[1]) {
+              const mx = gfp[1].x + (firstKx-gfp[1].x)/2;
+              ctx.beginPath(); ctx.moveTo(gfp[1].x,gfp[1].y); ctx.lineTo(mx,gfp[1].y); ctx.lineTo(mx,entryYB); ctx.lineTo(firstKx,entryYB); ctx.stroke();
+            }
+          }
+        });
       }
     }
   }
@@ -524,29 +690,35 @@
     matchups.forEach(m=>{(r[m.round]||(r[m.round]=[])).push(m);});
     return r;
   }
-
   function trunc(s,n){return s.length>n?s.slice(0,n)+'…':s;}
 
   // ── RESULTS ──
   function renderResults(s) {
     showScreen('results-screen');
     const el=document.getElementById('results-content');
-    const alive=(s.competitors||[]).filter(c=>!c.eliminated);
-    const champ=alive.length===1?alive[0]:(s.competitors||[]).reduce((b,c)=>(!b||c.wins>b.wins)?c:b,null);
-    const sorted=[...(s.competitors||[])].sort((a,b)=>b.wins-a.wins||a.losses-b.losses);
+    const km=s.knockoutMatchups||[];
+    const lastRound=km.filter(m=>m.winner);
+    const champ=lastRound.length?lastRound[lastRound.length-1].winner:'—';
+
+    // Build finalists summary
+    const finalists=s.knockoutFinalists||[];
     el.innerHTML=`
       <div class="results-eyebrow">The People Have Spoken</div>
       <div class="winner-headline">The Current Will Report</div>
-      <div class="winner-name">${champ?champ.name:'—'}</div>
+      <div class="winner-name">${champ}</div>
       <table class="results-table">
-        <thead><tr><th>#</th><th>Pitch</th><th>W</th><th>L</th><th>Status</th></tr></thead>
-        <tbody>${sorted.map((c,i)=>`<tr${i===0?' class="top"':''}>
-          <td>${i+1}</td><td>${c.name}</td><td>${c.wins}</td><td>${c.losses}</td>
-          <td>${c.eliminated?'❌':c.losses===1?'⚠ One loss':'✓'}</td></tr>`).join('')}</tbody>
+        <thead><tr><th>Pitch</th><th>Stage</th><th>Result</th></tr></thead>
+        <tbody>
+          ${finalists.map(f=>{
+            const wins=km.filter(m=>m.winner===f).length;
+            const isChamp=f===champ;
+            return `<tr${isChamp?' class="top"':''}><td>${f}</td><td>Finalist</td><td>${isChamp?'🏆 Champion':wins+' win'+( wins!==1?'s':'')}</td></tr>`;
+          }).join('')}
+        </tbody>
       </table>`;
   }
 
-  // ── VOTER URL + QR ──
+  // ── QR + URL ──
   function updateVoterURL() {
     const base=window.location.href.replace('index.html','').replace(/\/$/,'');
     const url=base+'/vote.html';
@@ -559,36 +731,38 @@
     const container=document.getElementById('qr-container');
     if (!container) return;
     container.innerHTML='';
-    if (window.QRCode) {
-      new QRCode(container,{text:url,width:160,height:160,colorDark:'#1a1208',colorLight:'#f5f0e8',correctLevel:QRCode.CorrectLevel.M});
-    } else {
-      const script=document.createElement('script');
-      script.src='https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js';
-      script.onload=()=>{
-        new QRCode(container,{text:url,width:160,height:160,colorDark:'#1a1208',colorLight:'#f5f0e8',correctLevel:QRCode.CorrectLevel.M});
-      };
-      document.head.appendChild(script);
+    const load=()=>new QRCode(container,{text:url,width:150,height:150,colorDark:'#1a1208',colorLight:'#f5f0e8',correctLevel:QRCode.CorrectLevel.M});
+    if (window.QRCode) load();
+    else {
+      const s=document.createElement('script');
+      s.src='https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js';
+      s.onload=load;
+      document.head.appendChild(s);
     }
   }
+
+  window.resetTournament = async function() {
+    if (!confirm('Reset everything? This cannot be undone.')) return;
+    if (timerInterval) clearInterval(timerInterval);
+    await set(ref(db,'tournament'),null);
+    await set(ref(db,'votes'),null);
+    showScreen('setup-screen');
+    renderSetup();
+  };
 
   // ── INIT ──
   get(ref(db,'tournament')).then(snap=>{
     const s=snap.val();
     if (s&&s.tournamentStarted&&!s.tournamentComplete) {
-      showScreen('host-screen');
-      subscribeState();
-      updateVoterURL();
+      showScreen('host-screen'); subscribeState(); updateVoterURL();
     } else if (s&&s.tournamentComplete) {
       renderResults(s);
     } else {
-      showScreen('setup-screen');
-      renderSetup();
+      showScreen('setup-screen'); renderSetup();
     }
   });
 
-  window.addEventListener('resize',()=>{
-    if (lastState&&bracketVisible) drawBracket(lastState);
-  });
+  window.addEventListener('resize',()=>{ if(lastState&&bracketVisible) drawBracket(lastState); });
 </script>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700;900&family=IBM+Plex+Mono:wght@400;500;700&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap');
@@ -597,46 +771,53 @@
   body{font-family:'IBM Plex Sans',sans-serif;background:var(--paper);color:var(--ink);min-height:100vh;}
   .screen{display:none;}.screen.active{display:block;}
 
-  /* MASTHEAD */
   .masthead{border-bottom:3px double var(--ink);padding:14px 24px 10px;text-align:center;background:var(--paper);}
   .masthead-eyebrow{font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:3px;text-transform:uppercase;color:var(--muted);margin-bottom:3px;}
   .masthead h1{font-family:'Playfair Display',serif;font-size:clamp(24px,4vw,44px);font-weight:900;line-height:1;letter-spacing:-1px;}
   .masthead h1 span{color:var(--accent);}
   .masthead-sub{font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:2px;text-transform:uppercase;color:var(--muted);margin-top:5px;border-top:1px solid var(--ink);padding-top:5px;}
 
-  /* BUTTONS */
   .btn{font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:700;letter-spacing:1px;text-transform:uppercase;border:2px solid var(--ink);padding:10px 22px;cursor:pointer;background:var(--ink);color:var(--paper);transition:all .15s;}
   .btn:hover{background:var(--accent);border-color:var(--accent);}
   .btn.secondary{background:transparent;color:var(--ink);}
   .btn.secondary:hover{background:var(--ink);color:var(--paper);}
   .btn.danger{background:var(--accent);border-color:var(--accent);}
   .btn.danger:hover{background:#a93226;border-color:#a93226;}
-  .btn.bracket-btn{background:var(--ink);color:var(--paper);font-size:11px;padding:8px 16px;}
-  .btn-row{display:flex;gap:10px;flex-wrap:wrap;}
+  .btn-row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;}
 
   /* SETUP */
-  .setup-body{max-width:960px;margin:0 auto;padding:28px 24px;}
+  .setup-body{max-width:1100px;margin:0 auto;padding:24px;}
   .setup-headline{font-family:'Playfair Display',serif;font-size:26px;font-weight:700;margin-bottom:6px;}
   .setup-deck{font-size:13px;color:var(--muted);margin-bottom:20px;font-family:'IBM Plex Mono',monospace;}
-  .pitch-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px;margin-bottom:20px;}
-  .pitch-card{border:1px solid var(--ink);padding:10px 12px;background:white;}
-  .pitch-num{font-family:'IBM Plex Mono',monospace;font-size:9px;color:var(--muted);margin-bottom:3px;letter-spacing:1px;}
-  .add-pitch-row{display:flex;gap:8px;margin-bottom:24px;align-items:stretch;}
-  .add-pitch-input{font-family:'Playfair Display',serif;font-size:14px;font-weight:700;border:2px solid var(--ink);padding:10px 14px;flex:1;outline:none;background:white;color:var(--ink);}
-  .add-pitch-input::placeholder{color:#ccc;font-weight:400;}
+  .setup-status{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--accent);margin-bottom:16px;}
+
+  .unassigned-label{font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:2px;text-transform:uppercase;color:var(--muted);margin-bottom:8px;}
+  #unassigned-pool{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:20px;padding:14px;border:1px dashed #ccc;background:white;min-height:48px;}
+  .pitch-chip{display:flex;align-items:center;gap:6px;border:1px solid var(--ink);padding:5px 10px;background:var(--paper);font-family:'IBM Plex Sans',sans-serif;font-size:13px;}
+  .pitch-chip select{cursor:pointer;}
+
+  .groups-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:20px;}
+  .group-box{border:2px solid var(--ink);background:white;padding:14px;}
+  .group-box-title{font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:700;letter-spacing:2px;text-transform:uppercase;margin-bottom:4px;}
+  .group-box-count{font-family:'IBM Plex Mono',monospace;font-size:9px;color:var(--muted);margin-bottom:10px;}
+  .group-item{display:flex;justify-content:space-between;align-items:center;font-size:13px;padding:4px 0;border-bottom:1px solid #eee;}
+  .group-item:last-child{border-bottom:none;}
+
+  .add-pitch-row{display:flex;gap:8px;margin-bottom:20px;}
+  .add-pitch-input{font-family:'IBM Plex Sans',sans-serif;font-size:14px;border:2px solid var(--ink);padding:9px 14px;flex:1;outline:none;background:white;}
+  .add-pitch-input::placeholder{color:#bbb;}
 
   /* HOST */
-  .host-toolbar{display:flex;align-items:center;gap:10px;padding:10px 20px;border-bottom:1px solid #ddd;background:var(--paper);}
+  .host-toolbar{display:flex;align-items:center;gap:10px;padding:10px 20px;border-bottom:1px solid #ddd;background:var(--paper);flex-wrap:wrap;}
   .host-toolbar-title{font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:2px;text-transform:uppercase;color:var(--muted);flex:1;}
 
-  /* CONTROLS VIEW */
-  #controls-view{max-width:1200px;margin:0 auto;padding:16px 20px;}
-  .controls-grid{display:grid;grid-template-columns:380px 1fr;gap:20px;align-items:start;}
+  #controls-view{max-width:1100px;margin:0 auto;padding:16px 20px;}
+  .controls-grid{display:grid;grid-template-columns:1fr 300px;gap:20px;align-items:start;}
 
-  /* MATCHUP CARD */
   .matchup-card{border:3px solid var(--ink);background:white;padding:20px;}
   .matchup-label{font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:3px;text-transform:uppercase;color:var(--muted);margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;}
-  .round-badge{background:var(--ink);color:var(--paper);font-family:'IBM Plex Mono',monospace;font-size:9px;padding:3px 7px;letter-spacing:1px;}
+  .phase-badge{background:var(--ink);color:var(--paper);font-family:'IBM Plex Mono',monospace;font-size:9px;padding:3px 7px;letter-spacing:1px;}
+
   .timer-block{text-align:center;margin-bottom:16px;}
   .timer-display{font-family:'IBM Plex Mono',monospace;font-size:56px;font-weight:700;line-height:1;color:var(--ink);transition:color .3s;}
   .timer-display.urgent{color:var(--accent);animation:pulse .5s infinite alternate;}
@@ -644,6 +825,23 @@
   .timer-label{font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:3px;text-transform:uppercase;color:var(--muted);}
   .timer-bar-wrap{height:5px;background:#ddd;margin:10px 0 16px;}
   .timer-bar{height:100%;background:var(--accent);transition:width 1s linear;}
+
+  /* GROUP PITCH ROWS */
+  .group-pitch-row{display:grid;grid-template-columns:24px 1fr 120px 40px;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid #f0ece4;position:relative;}
+  .group-pitch-row.advancing{background:#f0fdf4;border-radius:2px;padding:6px 4px;}
+  .group-pitch-rank{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--muted);text-align:center;}
+  .group-pitch-name{font-family:'Playfair Display',serif;font-size:14px;font-weight:700;line-height:1.2;}
+  .group-pitch-bar-wrap{height:8px;background:#eee;}
+  .group-pitch-bar{height:100%;background:var(--accent);transition:width .5s ease;}
+  .group-pitch-row.advancing .group-pitch-bar{background:#4caf50;}
+  .group-pitch-votes{font-family:'IBM Plex Mono',monospace;font-size:13px;font-weight:700;color:var(--accent);text-align:right;}
+  .advancing-badge{position:absolute;right:-60px;font-family:'IBM Plex Mono',monospace;font-size:8px;background:#4caf50;color:white;padding:2px 5px;letter-spacing:1px;}
+
+  .vote-total{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--muted);text-align:center;margin:12px 0;}
+  .matchup-result{font-family:'IBM Plex Mono',monospace;font-size:11px;color:#2e7d32;text-align:center;margin-bottom:12px;display:none;padding:6px;background:#e8f5e9;}
+  .host-controls{display:flex;gap:8px;flex-wrap:wrap;justify-content:center;}
+
+  /* KNOCKOUT VS ROW */
   .versus-row{display:grid;grid-template-columns:1fr 36px 1fr;gap:8px;align-items:center;margin-bottom:12px;}
   .competitor{border:2px solid var(--ink);padding:12px;text-align:center;transition:background .3s;}
   .competitor.leading{background:#fff8e1;border-color:var(--gold);}
@@ -653,24 +851,15 @@
   .vote-bar{height:100%;background:var(--accent);transition:width .4s ease;}
   .competitor-pct{font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--muted);margin-top:3px;}
   .vs-label{font-family:'Playfair Display',serif;font-size:18px;font-weight:900;text-align:center;color:var(--muted);}
-  .vote-total{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--muted);text-align:center;margin-bottom:12px;}
-  .matchup-result{font-family:'IBM Plex Mono',monospace;font-size:11px;color:#2e7d32;text-align:center;margin-bottom:12px;display:none;padding:6px;background:#e8f5e9;}
-  .host-controls{display:flex;gap:8px;flex-wrap:wrap;justify-content:center;}
 
-  /* RIGHT COLUMN */
+  /* RIGHT PANEL */
   .right-col{display:flex;flex-direction:column;gap:14px;}
   .join-panel{border:1px solid #ccc;padding:14px;background:white;}
   .join-headline{font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:2px;text-transform:uppercase;color:var(--muted);margin-bottom:8px;}
-  .join-url{font-family:'IBM Plex Mono',monospace;font-size:11px;background:var(--ink);color:var(--paper);padding:7px 10px;word-break:break-all;}
-  .elim-section{border:1px solid #ccc;padding:14px;background:white;}
-  .elim-title{font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:3px;text-transform:uppercase;color:var(--muted);margin-bottom:8px;}
-  .elim-pills{display:flex;flex-wrap:wrap;gap:5px;}
-  .elim-pill{font-family:'IBM Plex Mono',monospace;font-size:8px;padding:2px 7px;background:#eee;color:#999;text-decoration:line-through;}
-  .alive-pill{font-family:'IBM Plex Mono',monospace;font-size:8px;padding:2px 7px;background:#e8f5e9;color:#2e7d32;}
-  .loss1-pill{font-family:'IBM Plex Mono',monospace;font-size:8px;padding:2px 7px;background:#fff3e0;color:#e65100;}
+  .join-url{font-family:'IBM Plex Mono',monospace;font-size:10px;background:var(--ink);color:var(--paper);padding:7px 10px;word-break:break-all;}
 
   /* BRACKET VIEW */
-  #bracket-view{display:none;height:calc(100vh - 120px);overflow:auto;background:#faf7f0;padding:20px;}
+  #bracket-view{display:none;min-height:calc(100vh - 120px);overflow:auto;background:#faf7f0;padding:20px;}
   #bracket-canvas{display:block;}
 
   /* RESULTS */
@@ -683,10 +872,7 @@
   .results-table td{font-family:'IBM Plex Sans',sans-serif;font-size:13px;padding:7px 10px;border-bottom:1px solid #ddd;}
   .results-table tr.top td{font-weight:700;color:var(--accent);}
 
-  @media(max-width:900px){
-    .controls-grid{grid-template-columns:1fr;}
-    .versus-row{grid-template-columns:1fr 28px 1fr;}
-  }
+  @media(max-width:800px){.controls-grid{grid-template-columns:1fr;}.groups-grid{grid-template-columns:1fr;}}
 </style>
 </head>
 <body>
@@ -696,19 +882,43 @@
   <div class="masthead">
     <div class="masthead-eyebrow">Lafayette's Independent News Source</div>
     <h1>The <span>Current</span></h1>
-    <div class="masthead-sub">Host Setup</div>
+    <div class="masthead-sub">Host Setup — Group Stage</div>
   </div>
   <div class="setup-body">
-    <div class="setup-headline">Confirm the Pitches</div>
-    <div class="setup-deck" id="setup-deck">18 pitches loaded</div>
-    <div class="pitch-grid" id="pitch-grid"></div>
+    <div class="setup-headline">Assign Pitches to Groups</div>
+    <div class="setup-deck">Drag each pitch into a group using the dropdown, or auto-assign randomly.</div>
+    <div class="setup-status" id="setup-status"></div>
+
+    <div class="unassigned-label">Unassigned Pitches</div>
+    <div id="unassigned-pool"></div>
+
+    <div class="groups-grid">
+      <div class="group-box">
+        <div class="group-box-title">Group A</div>
+        <div class="group-box-count" id="group-0-count">0 pitches</div>
+        <div id="group-0-list"></div>
+      </div>
+      <div class="group-box">
+        <div class="group-box-title">Group B</div>
+        <div class="group-box-count" id="group-1-count">0 pitches</div>
+        <div id="group-1-list"></div>
+      </div>
+      <div class="group-box">
+        <div class="group-box-title">Group C</div>
+        <div class="group-box-count" id="group-2-count">0 pitches</div>
+        <div id="group-2-list"></div>
+      </div>
+    </div>
+
     <div class="add-pitch-row">
       <input class="add-pitch-input" id="new-pitch-input" type="text"
-        placeholder="Add a late pitch…" onkeydown="addPitchOnEnter(event)">
-      <button class="btn secondary" onclick="addPitch()">+ Add</button>
+        placeholder="Add a late pitch…" onkeydown="addOnEnter(event)">
+      <button class="btn secondary" onclick="addNewPitch()">+ Add</button>
     </div>
+
     <div class="btn-row">
-      <button class="btn" onclick="startTournament()">🎲 Randomize Bracket &amp; Begin</button>
+      <button class="btn" onclick="startTournament()">▶ Begin Tournament</button>
+      <button class="btn secondary" onclick="autoAssign()">🎲 Auto-Assign</button>
     </div>
   </div>
 </div>
@@ -718,77 +928,52 @@
   <div class="masthead">
     <div class="masthead-eyebrow">Lafayette's Independent News Source — Host View</div>
     <h1>The <span>Current</span></h1>
-    <div class="masthead-sub" id="host-round-label">Double Elimination Tournament</div>
+    <div class="masthead-sub" id="host-round-label">Tournament</div>
   </div>
-
-  <!-- TOOLBAR -->
   <div class="host-toolbar">
     <span class="host-toolbar-title">Host Controls</span>
-    <button class="btn bracket-btn" onclick="showBracket()">📊 View Bracket</button>
+    <button class="btn" style="font-size:11px;padding:8px 16px;" onclick="showBracket()">📊 View Bracket</button>
     <button class="btn secondary" onclick="resetTournament()" style="font-size:10px;padding:7px 14px;border-color:#bbb;color:#999;">Reset</button>
   </div>
 
-  <!-- CONTROLS VIEW -->
   <div id="controls-view">
     <div class="controls-grid">
-      <!-- LEFT: matchup -->
       <div>
         <div class="matchup-card">
           <div class="matchup-label">
-            <span>Current Matchup</span>
-            <span class="round-badge" id="matchup-round-badge">—</span>
+            <span id="matchup-context">Current Vote</span>
+            <span class="phase-badge" id="phase-badge">—</span>
           </div>
           <div class="timer-block">
             <div class="timer-display" id="host-timer">30</div>
             <div class="timer-label">seconds remaining</div>
             <div class="timer-bar-wrap"><div class="timer-bar" id="timer-bar" style="width:100%"></div></div>
           </div>
-          <div class="versus-row">
-            <div class="competitor" id="comp-a">
-              <div class="competitor-name" id="comp-a-name">—</div>
-              <div class="competitor-votes" id="comp-a-votes">0</div>
-              <div class="vote-bar-wrap"><div class="vote-bar" id="bar-a" style="width:50%"></div></div>
-              <div class="competitor-pct" id="pct-a"></div>
-            </div>
-            <div class="vs-label">vs</div>
-            <div class="competitor" id="comp-b">
-              <div class="competitor-name" id="comp-b-name">—</div>
-              <div class="competitor-votes" id="comp-b-votes">0</div>
-              <div class="vote-bar-wrap"><div class="vote-bar" id="bar-b" style="width:50%"></div></div>
-              <div class="competitor-pct" id="pct-b"></div>
-            </div>
-          </div>
+          <div id="group-pitches"></div>
           <div class="vote-total" id="vote-total">—</div>
           <div class="matchup-result" id="matchup-result"></div>
           <div class="host-controls">
-            <button class="btn" id="start-btn" onclick="startMatchup()">▶ Start Voting</button>
+            <button class="btn" id="start-btn">▶ Open Voting</button>
             <button class="btn danger" id="end-early-btn" onclick="endVoteEarly()" style="display:none">⏹ End Early</button>
-            <button class="btn secondary" id="next-btn" onclick="advanceMatchup()" style="display:none">Next Matchup →</button>
+            <button class="btn secondary" id="next-btn" style="display:none">Next →</button>
           </div>
         </div>
       </div>
-
-      <!-- RIGHT: QR + field status -->
       <div class="right-col">
         <div class="join-panel">
-          <div class="join-headline">Voter URL — share with audience</div>
+          <div class="join-headline">Voter URL</div>
           <div class="join-url" id="voter-url">—</div>
           <div id="qr-container" style="margin:12px auto 4px;display:flex;justify-content:center;"></div>
           <div style="font-family:'IBM Plex Mono',monospace;font-size:9px;color:var(--muted);text-align:center;letter-spacing:1px;">SCAN TO VOTE</div>
-        </div>
-        <div class="elim-section">
-          <div class="elim-title">Field Status</div>
-          <div class="elim-pills" id="field-status"></div>
         </div>
       </div>
     </div>
   </div>
 
-  <!-- BRACKET VIEW (fullscreen toggle) -->
   <div id="bracket-view">
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;">
       <button class="btn secondary" onclick="showControls()" style="font-size:11px;padding:8px 16px;">← Back to Controls</button>
-      <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:2px;text-transform:uppercase;color:var(--muted);">Tournament Bracket — scroll to explore</span>
+      <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:2px;text-transform:uppercase;color:var(--muted);">Full Tournament Bracket — scroll to explore</span>
     </div>
     <canvas id="bracket-canvas"></canvas>
   </div>

@@ -25,88 +25,156 @@
   const DEVICE_ID_KEY = 'pitchparty_device_id';
   function getDeviceId() {
     let id = localStorage.getItem(DEVICE_ID_KEY);
-    if (!id) {
-      id = 'dev_' + Math.random().toString(36).slice(2) + Date.now().toString(36);
-      localStorage.setItem(DEVICE_ID_KEY, id);
-    }
+    if (!id) { id='dev_'+Math.random().toString(36).slice(2)+Date.now().toString(36); localStorage.setItem(DEVICE_ID_KEY,id); }
     return id;
   }
   const DEVICE_ID = getDeviceId();
 
-  let lastIdx = -1;
-
-  window.castVote = async function(choice) {
+  // Cast a group vote (pick up to 2)
+  window.castGroupVote = async function(pitchName) {
     const snap = await get(ref(db,'tournament'));
     const s = snap.val();
-    if (!s || !s.votingOpen) return;
-    const idx = s.currentMatchupIndex;
-    const vRef = ref(db, `votes/${idx}/${DEVICE_ID}`);
+    if (!s||!s.votingOpen||s.phase!=='group') return;
+    const gi = s.currentGroup;
+    const g = s.groupStages[gi];
+    if (!g||!g.open||g.closed) return;
+
+    // Check existing votes for this group
+    const vSnap = await get(ref(db,`votes/group_${gi}/${DEVICE_ID}`));
+    const myVotes = vSnap.val() || [];
+    if (myVotes.includes(pitchName)) {
+      // Unvote
+      const updated = myVotes.filter(v=>v!==pitchName);
+      await set(ref(db,`votes/group_${gi}/${DEVICE_ID}`), updated);
+      await runTransaction(ref(db,`tournament/groupStages/${gi}/votes/${pitchName}`), v=>(v||0)-1);
+    } else if (myVotes.length < 2) {
+      // Vote
+      await set(ref(db,`votes/group_${gi}/${DEVICE_ID}`), [...myVotes, pitchName]);
+      await runTransaction(ref(db,`tournament/groupStages/${gi}/votes/${pitchName}`), v=>(v||0)+1);
+    }
+  };
+
+  // Cast a knockout vote
+  window.castKnockoutVote = async function(choice) {
+    const snap = await get(ref(db,'tournament'));
+    const s = snap.val();
+    if (!s||!s.votingOpen||s.phase!=='knockout') return;
+    const idx = s.knockoutIndex;
+    const vRef = ref(db,`votes/knockout_${idx}/${DEVICE_ID}`);
     const ex = await get(vRef);
     if (ex.exists()) return;
     await set(vRef, choice);
-    const field = choice==='a' ? 'aVotes' : 'bVotes';
-    await runTransaction(ref(db,`tournament/matchups/${idx}/${field}`), v => (v||0)+1);
+    const field = choice==='a'?'aVotes':'bVotes';
+    await runTransaction(ref(db,`tournament/knockoutMatchups/${idx}/${field}`),v=>(v||0)+1);
   };
 
   function render(s) {
     const el = document.getElementById('content');
-
-    if (!s || !s.tournamentStarted) {
-      el.innerHTML = waiting('Stand by…', 'Waiting for the host to begin');
-      return;
+    if (!s||!s.tournamentStarted) {
+      el.innerHTML=waiting('Stand by…','Waiting for host to begin'); return;
     }
     if (s.tournamentComplete) {
-      const alive = (s.competitors||[]).filter(c=>!c.eliminated);
-      const champ = alive.length===1?alive[0].name:'Check the main screen';
-      el.innerHTML = `<div class="message"><div class="trophy">🏆</div><h2>We have a winner!</h2><p class="champ">${champ}</p><p class="sub">Thanks for voting!</p></div>`;
+      const km=s.knockoutMatchups||[];
+      const last=km.filter(m=>m.winner);
+      const champ=last.length?last[last.length-1].winner:'—';
+      el.innerHTML=`<div class="message"><div class="trophy">🏆</div><h2>We have a winner!</h2><p class="champ">${champ}</p><p class="sub">Thanks for voting!</p></div>`;
       return;
     }
 
-    const idx = s.currentMatchupIndex;
-    const m = (s.matchups||[])[idx];
-    if (!m) { el.innerHTML = waiting('Stand by…', 'Loading next matchup…'); return; }
+    if (s.phase==='group') renderGroup(s, el);
+    else renderKnockout(s, el);
+  }
+
+  async function renderGroup(s, el) {
+    const gi = s.currentGroup;
+    const g = s.groupStages[gi];
+    if (!g) { el.innerHTML=waiting('Stand by…','Loading group…'); return; }
+
+    if (g.closed) {
+      const votes=g.votes||{};
+      const sorted=Object.entries(votes).sort((a,b)=>b[1]-a[1]);
+      const top2=sorted.slice(0,2).map(e=>e[0]);
+      el.innerHTML=`<div class="message">
+        <div class="check">✓</div>
+        <h2>Group ${g.name} closed</h2>
+        <p class="sub" style="margin-bottom:16px;">Advancing to knockout:</p>
+        ${top2.map(p=>`<div class="advancing-name">${p}</div>`).join('')}
+        <p class="sub" style="margin-top:16px;">Next group coming up…</p>
+      </div>`;
+      return;
+    }
+
+    if (!s.votingOpen||!g.open) {
+      el.innerHTML=`<div class="message">
+        <div class="upcoming-label">Coming up — Group ${g.name}</div>
+        <div class="upcoming-list">${g.pitches.map(p=>`<div class="upcoming-item">${p}</div>`).join('')}</div>
+        <p class="sub">Waiting for host to open voting…</p>
+      </div>`;
+      return;
+    }
+
+    const secs=s.timerSeconds!==undefined?s.timerSeconds:30;
+
+    // Get my current votes
+    const vSnap = await get(ref(db,`votes/group_${gi}/${DEVICE_ID}`));
+    const myVotes = vSnap.val() || [];
+    const canVoteMore = myVotes.length < 2;
+
+    el.innerHTML=`
+      <div class="voting-ui">
+        <div class="round-tag">Group ${g.name} — Pick your top 2</div>
+        <div class="countdown${secs<=10?' urgent':''}">${secs}</div>
+        <div class="pick-note">${myVotes.length===0?'Tap up to 2 pitches':myVotes.length===1?'Pick one more (or tap again to unvote)':'You picked 2 — tap to unvote'}</div>
+        <div class="group-choices">
+          ${g.pitches.map(p=>{
+            const selected=myVotes.includes(p);
+            return `<button class="group-choice-btn${selected?' selected':''}" onclick="castGroupVote('${p.replace(/'/g,"\\'")}')">
+              ${p}${selected?' ✓':''}
+            </button>`;
+          }).join('')}
+        </div>
+        ${myVotes.length>0?`<div class="voted-msg">Your picks: ${myVotes.join(', ')}</div>`:''}
+      </div>`;
+  }
+
+  function renderKnockout(s, el) {
+    const idx = s.knockoutIndex||0;
+    const m=(s.knockoutMatchups||[])[idx];
+    if (!m) { el.innerHTML=waiting('Stand by…','Loading matchup…'); return; }
 
     if (m.winner) {
-      el.innerHTML = `<div class="message"><div class="check">✓</div><h2>Round closed</h2><p class="champ">${m.winner}</p><p class="sub">advances to the next round</p><p class="next-up">Next matchup coming up…</p></div>`;
+      el.innerHTML=`<div class="message"><div class="check">✓</div><h2>Round closed</h2><p class="champ">${m.winner}</p><p class="sub">advances</p><p class="next-up">Next matchup coming up…</p></div>`;
       return;
     }
-
     if (!s.votingOpen) {
-      // Show what's coming
-      el.innerHTML = `<div class="message"><div class="upcoming-label">Up next</div><div class="upcoming-vs">
-        <div class="upcoming-name">${m.a}</div>
-        <div class="upcoming-divider">vs</div>
-        <div class="upcoming-name">${m.b}</div>
-      </div><p class="sub">Waiting for host to open voting…</p></div>`;
+      el.innerHTML=`<div class="message">
+        <div class="upcoming-label">Up next — ${m.round}</div>
+        <div class="upcoming-vs"><div class="upcoming-name">${m.a}</div><div class="upcoming-divider">vs</div><div class="upcoming-name">${m.b}</div></div>
+        <p class="sub">Waiting for host…</p>
+      </div>`;
       return;
     }
 
-    const secs = s.timerSeconds!==undefined ? s.timerSeconds : 30;
-    // Check device vote
-    get(ref(db,`votes/${idx}/${DEVICE_ID}`)).then(snap => {
-      const myVote = snap.val();
-      const voted = !!myVote;
-      const aV=m.aVotes||0, bV=m.bVotes||0, tot=aV+bV;
-      const aPct=tot?Math.round(aV/tot*100):50, bPct=tot?Math.round(bV/tot*100):50;
-
-      el.innerHTML = `
+    const secs=s.timerSeconds!==undefined?s.timerSeconds:30;
+    get(ref(db,`votes/knockout_${idx}/${DEVICE_ID}`)).then(snap=>{
+      const myVote=snap.val();
+      const voted=!!myVote;
+      const aV=m.aVotes||0,bV=m.bVotes||0,tot=aV+bV;
+      const aPct=tot?Math.round(aV/tot*100):50,bPct=tot?Math.round(bV/tot*100):50;
+      el.innerHTML=`
         <div class="voting-ui">
           <div class="round-tag">${m.round}</div>
-          <div class="countdown ${secs<=10?'urgent':''}">${secs}</div>
-          <div class="choices">
-            <button class="choice-btn ${voted?(myVote==='a'?'chosen':'unchosen'):''}"
-              onclick="castVote('a')" ${voted?'disabled':''}>
-              <span class="choice-name">${m.a}</span>
-              ${voted?`<div class="result-bar-wrap"><div class="result-bar" style="width:${aPct}%"></div></div><span class="result-pct">${aPct}%</span>`:''}
-            </button>
-            <div class="vs-divider">vs</div>
-            <button class="choice-btn ${voted?(myVote==='b'?'chosen':'unchosen'):''}"
-              onclick="castVote('b')" ${voted?'disabled':''}>
-              <span class="choice-name">${m.b}</span>
-              ${voted?`<div class="result-bar-wrap"><div class="result-bar" style="width:${bPct}%"></div></div><span class="result-pct">${bPct}%</span>`:''}
-            </button>
-          </div>
-          ${voted?`<div class="voted-msg">Vote recorded ✓ — ${tot} vote${tot!==1?'s':''} cast</div>`:'<div class="tap-prompt">Tap to vote</div>'}
+          <div class="countdown${secs<=10?' urgent':''}">${secs}</div>
+          <button class="choice-btn${voted?(myVote==='a'?' chosen':' unchosen'):''}" onclick="castKnockoutVote('a')" ${voted?'disabled':''}>
+            <span class="choice-name">${m.a}</span>
+            ${voted?`<div class="result-bar-wrap"><div class="result-bar" style="width:${aPct}%"></div></div><span class="result-pct">${aPct}%</span>`:''}
+          </button>
+          <div class="voter-vs">vs</div>
+          <button class="choice-btn${voted?(myVote==='b'?' chosen':' unchosen'):''}" onclick="castKnockoutVote('b')" ${voted?'disabled':''}>
+            <span class="choice-name">${m.b}</span>
+            ${voted?`<div class="result-bar-wrap"><div class="result-bar" style="width:${bPct}%"></div></div><span class="result-pct">${bPct}%</span>`:''}
+          </button>
+          ${voted?`<div class="voted-msg">Vote recorded ✓ — ${tot} total</div>`:'<div class="tap-prompt">Tap to vote</div>'}
         </div>`;
     });
   }
@@ -115,11 +183,7 @@
     return `<div class="message"><div class="dot-pulse"><span></span><span></span><span></span></div><h2>${title}</h2><p class="sub">${sub}</p></div>`;
   }
 
-  // Subscribe
-  onValue(ref(db,'tournament'), snap => {
-    const s = snap.val();
-    render(s);
-  });
+  onValue(ref(db,'tournament'), snap=>{ const s=snap.val(); render(s); });
 </script>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;900&family=IBM+Plex+Mono:wght@400;700&family=IBM+Plex+Sans:wght@400;600&display=swap');
@@ -127,60 +191,63 @@
   *{box-sizing:border-box;margin:0;padding:0;}
   body{font-family:'IBM Plex Sans',sans-serif;background:var(--paper);color:var(--ink);min-height:100vh;display:flex;flex-direction:column;}
 
-  /* MASTHEAD */
   .masthead{border-bottom:3px double var(--ink);padding:14px 20px 10px;text-align:center;}
   .masthead-eyebrow{font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:3px;text-transform:uppercase;color:var(--muted);margin-bottom:3px;}
   .masthead h1{font-family:'Playfair Display',serif;font-size:32px;font-weight:900;line-height:1;letter-spacing:-1px;}
   .masthead h1 span{color:var(--accent);}
   .masthead-sub{font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:2px;text-transform:uppercase;color:var(--muted);margin-top:5px;border-top:1px solid var(--ink);padding-top:5px;}
 
-  /* MAIN */
   #content{flex:1;display:flex;align-items:center;justify-content:center;padding:20px;}
 
-  /* WAITING/MESSAGE */
-  .message{text-align:center;max-width:340px;}
+  /* MESSAGES */
+  .message{text-align:center;max-width:360px;width:100%;}
   .message h2{font-family:'Playfair Display',serif;font-size:26px;font-weight:700;margin-bottom:10px;}
   .sub{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--muted);letter-spacing:1px;margin-top:6px;}
   .champ{font-family:'Playfair Display',serif;font-size:22px;font-weight:700;color:var(--accent);margin:10px 0;}
   .next-up{font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--muted);margin-top:16px;}
   .trophy{font-size:48px;margin-bottom:12px;}
   .check{font-size:48px;color:#2e7d32;margin-bottom:12px;}
+  .advancing-name{font-family:'Playfair Display',serif;font-size:18px;font-weight:700;padding:8px 16px;border:2px solid #4caf50;background:#f0fdf4;margin:6px 0;color:#2e7d32;}
 
-  /* DOT PULSE */
   .dot-pulse{display:flex;justify-content:center;gap:8px;margin-bottom:16px;}
   .dot-pulse span{width:10px;height:10px;background:var(--muted);border-radius:50%;animation:dp 1.2s infinite ease-in-out;}
-  .dot-pulse span:nth-child(2){animation-delay:.2s;}
-  .dot-pulse span:nth-child(3){animation-delay:.4s;}
+  .dot-pulse span:nth-child(2){animation-delay:.2s;} .dot-pulse span:nth-child(3){animation-delay:.4s;}
   @keyframes dp{0%,80%,100%{transform:scale(0);opacity:.3}40%{transform:scale(1);opacity:1}}
 
-  /* UPCOMING */
-  .upcoming-label{font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:3px;text-transform:uppercase;color:var(--muted);margin-bottom:16px;}
+  .upcoming-label{font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:3px;text-transform:uppercase;color:var(--muted);margin-bottom:12px;}
+  .upcoming-list{display:flex;flex-direction:column;gap:6px;margin-bottom:16px;}
+  .upcoming-item{font-family:'Playfair Display',serif;font-size:16px;font-weight:700;padding:8px;border:1px solid #ddd;background:white;}
   .upcoming-vs{display:flex;flex-direction:column;align-items:center;gap:8px;margin-bottom:16px;}
-  .upcoming-name{font-family:'Playfair Display',serif;font-size:20px;font-weight:700;text-align:center;max-width:280px;}
-  .upcoming-divider{font-family:'Playfair Display',serif;font-size:16px;font-weight:900;color:var(--muted);}
+  .upcoming-name{font-family:'Playfair Display',serif;font-size:20px;font-weight:700;text-align:center;}
+  .upcoming-divider{font-family:'Playfair Display',serif;font-size:14px;font-weight:900;color:var(--muted);}
 
   /* VOTING UI */
-  .voting-ui{width:100%;max-width:360px;}
+  .voting-ui{width:100%;max-width:380px;}
   .round-tag{font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:3px;text-transform:uppercase;color:var(--muted);text-align:center;margin-bottom:8px;}
-  .countdown{font-family:'IBM Plex Mono',monospace;font-size:56px;font-weight:700;text-align:center;line-height:1;margin-bottom:16px;color:var(--ink);transition:color .3s;}
+  .countdown{font-family:'IBM Plex Mono',monospace;font-size:52px;font-weight:700;text-align:center;line-height:1;margin-bottom:12px;color:var(--ink);}
   .countdown.urgent{color:var(--accent);animation:pulse .5s infinite alternate;}
   @keyframes pulse{from{opacity:1}to{opacity:.5}}
+  .pick-note{font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--muted);text-align:center;margin-bottom:12px;letter-spacing:1px;}
 
-  .choices{display:flex;flex-direction:column;gap:0;}
+  /* GROUP CHOICES */
+  .group-choices{display:flex;flex-direction:column;gap:8px;margin-bottom:12px;}
+  .group-choice-btn{width:100%;border:2px solid var(--ink);background:white;padding:14px 16px;font-family:'Playfair Display',serif;font-size:17px;font-weight:700;cursor:pointer;text-align:left;transition:all .15s;line-height:1.3;}
+  .group-choice-btn:hover{background:#fff8e1;border-color:var(--gold);}
+  .group-choice-btn.selected{background:var(--ink);color:var(--paper);border-color:var(--ink);}
+
+  /* KNOCKOUT CHOICES */
   .choice-btn{width:100%;border:2px solid var(--ink);background:white;padding:18px 16px;font-family:'Playfair Display',serif;font-size:20px;font-weight:700;cursor:pointer;text-align:center;transition:all .15s;line-height:1.3;display:flex;flex-direction:column;align-items:center;gap:8px;margin-bottom:10px;}
   .choice-btn:hover:not(:disabled){background:var(--ink);color:var(--paper);}
-  .choice-btn.chosen{background:var(--ink);color:var(--paper);border-color:var(--ink);}
-  .choice-btn.unchosen{opacity:.45;cursor:default;}
+  .choice-btn.chosen{background:var(--ink);color:var(--paper);}
+  .choice-btn.unchosen{opacity:.4;cursor:default;}
   .choice-name{display:block;}
-
-  .result-bar-wrap{width:100%;height:8px;background:rgba(255,255,255,.2);border-radius:0;}
-  .choice-btn.chosen .result-bar-wrap{background:rgba(255,255,255,.2);}
+  .result-bar-wrap{width:100%;height:8px;background:rgba(255,255,255,.2);}
   .choice-btn:not(.chosen) .result-bar-wrap{background:#eee;}
   .result-bar{height:100%;background:var(--accent);transition:width .5s ease;}
   .choice-btn.chosen .result-bar{background:var(--gold);}
   .result-pct{font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:700;}
+  .voter-vs{font-family:'Playfair Display',serif;font-size:16px;font-weight:900;color:var(--muted);text-align:center;margin-bottom:10px;}
 
-  .vs-divider{font-family:'Playfair Display',serif;font-size:16px;font-weight:900;color:var(--muted);text-align:center;margin-bottom:10px;}
   .voted-msg{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--muted);text-align:center;padding:10px;border:1px dashed var(--muted);margin-top:4px;}
   .tap-prompt{font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--muted);text-align:center;letter-spacing:2px;text-transform:uppercase;margin-top:8px;}
 </style>
@@ -192,11 +259,7 @@
   <div class="masthead-sub">Pitch Party — Your Vote</div>
 </div>
 <div id="content">
-  <div class="message">
-    <div class="dot-pulse"><span></span><span></span><span></span></div>
-    <h2>Connecting…</h2>
-    <p class="sub">Please wait</p>
-  </div>
+  <div class="message"><div class="dot-pulse"><span></span><span></span><span></span></div><h2>Connecting…</h2><p class="sub">Please wait</p></div>
 </div>
 </body>
 </html>
